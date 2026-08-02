@@ -84,8 +84,11 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ user: verifiedUser });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Login verify error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: error?.message || "Internal server error" },
+      { status: 500 }
+    );
   }
 }
