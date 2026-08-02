@@ -24,9 +24,10 @@ export default function HomePage() {
 
   React.useEffect(() => {
     if (!user) return;
+    const handle = user.handle;
     async function loadStats() {
       try {
-        const res = await fetch(`/api/profile/${encodeURIComponent(user.handle)}`);
+        const res = await fetch(`/api/profile/${encodeURIComponent(handle)}`);
         const data = await res.json();
         if (res.ok) setProfileData(data);
       } catch (err) {

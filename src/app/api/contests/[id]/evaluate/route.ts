@@ -272,6 +272,17 @@ export async function POST(
 
     const standings = calculateStandings(updatedContest, player1, player2);
 
+    if (updatedContest!.mode === "BLITZ") {
+      const allLocked = updatedContest!.problems.every((p) => p.lockedWinnerId !== null);
+      if (allLocked) await finishContest(updatedContest, roomCode);
+    } else if (updatedContest!.mode === "CLASSIC") {
+      // Keep the classic win condition aligned with the latest contest snapshot.
+      const p1AC = standings.host.acceptedCount;
+      const p2AC = standings.guest.acceptedCount;
+      const total = updatedContest!.problems.length;
+      if (p1AC === total && p2AC === total) await finishContest(updatedContest, roomCode);
+    }
+
     if (newSubmissionsCount > 0) {
       await channel.send({
         type: 'broadcast',
@@ -284,17 +295,6 @@ export async function POST(
         event: 'problems-update',
         payload: { problems: updatedContest!.problems },
       });
-
-      // Check win condition immediately after updates
-      if (updatedContest!.mode === "BLITZ") {
-        const allLocked = updatedContest!.problems.every((p) => p.lockedWinnerId !== null);
-        if (allLocked) await finishContest(updatedContest, roomCode);
-      } else if (updatedContest!.mode === "CLASSIC") {
-        const p1AC = standings.host.acceptedCount;
-        const p2AC = standings.guest.acceptedCount;
-        const total = updatedContest!.problems.length;
-        if (p1AC === total && p2AC === total) await finishContest(updatedContest, roomCode);
-      }
     }
 
     // Refetch in case status was updated by finishContest

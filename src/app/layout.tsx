@@ -19,7 +19,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body
         style={{
-          backgroundColor: "var(--bg-main)",
+          backgroundColor: "#000000",
           color: "var(--text-primary)",
           minHeight: "100vh",
           display: "flex",
