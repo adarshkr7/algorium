@@ -19,17 +19,27 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
   const [copied, setCopied] = useState(false);
   const [connectedPlayers, setConnectedPlayers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    async function initRoom() {
+    let isMounted = true;
+    let pollInterval: NodeJS.Timeout;
+
+    async function fetchRoomState() {
       try {
-        setLoading(true);
-        const res = await fetch(`/api/rooms/${code}`);
+        const res = await fetch(`/api/rooms/${code}`, { cache: "no-store" });
         const data = await res.json();
-        if (!res.ok || !data.room) { setError("Room not found"); setLoading(false); return; }
+        if (!res.ok || !data.room) {
+          if (isMounted) setError("Room not found");
+          return;
+        }
 
         let currentRoom = data.room;
-        if (currentRoom.status === "IN_PROGRESS") { router.push(`/arena/${code}`); return; }
+
+        if (currentRoom.status === "IN_PROGRESS") {
+          router.push(`/arena/${code}`);
+          return;
+        }
 
         const isSupervised = currentRoom.hostingType === "SUPERVISED";
         const isHostUser = user && user.id === currentRoom.hostId;
@@ -41,40 +51,99 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
 
           if (!isPlayer1 && !isPlayer2) {
             const joinRes = await fetch(`/api/rooms/${code}/join`, {
-              method: "POST", headers: { "Content-Type": "application/json" },
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ guestId: user.id }),
             });
             const joinData = await joinRes.json();
-            if (joinRes.ok && joinData.room) currentRoom = joinData.room;
+            if (joinRes.ok && joinData.room) {
+              currentRoom = joinData.room;
+              if (currentRoom.status === "IN_PROGRESS") {
+                router.push(`/arena/${code}`);
+                return;
+              }
+            }
           }
         }
-        setRoom(currentRoom);
 
-        const socket = getSocket();
-        socket.emit("join-room", { roomCode: code, handle: user ? user.handle : "Guest", userId: user ? user.id : null });
-        socket.on("room-users-update", ({ players }: { players: any[] }) => {
-          setConnectedPlayers(players);
-          fetch(`/api/rooms/${code}`).then(r => r.json()).then(d => d.room && setRoom(d.room));
-        });
-        socket.on("contest-started", () => { router.push(`/arena/${code}`); });
-        return () => { socket.off("room-users-update"); socket.off("contest-started"); };
-      } catch (err: any) { setError(err.message || "Failed to load room"); }
-      finally { setLoading(false); }
+        if (isMounted) {
+          setRoom(currentRoom);
+          setError(null);
+        }
+      } catch (err: any) {
+        if (isMounted) setError(err.message || "Failed to load room");
+      } finally {
+        if (isMounted) setLoading(false);
+      }
     }
-    initRoom();
+
+    fetchRoomState();
+
+    // Setup HTTP Polling fallback every 3 seconds
+    pollInterval = setInterval(fetchRoomState, 3000);
+
+    // Setup Socket.IO connection
+    const socket = getSocket();
+    socket.emit("join-room", { roomCode: code, handle: user ? user.handle : "Guest", userId: user ? user.id : null });
+
+    socket.on("room-users-update", ({ players }: { players: any[] }) => {
+      if (isMounted) setConnectedPlayers(players);
+      fetchRoomState();
+    });
+
+    socket.on("contest-started", () => {
+      router.push(`/arena/${code}`);
+    });
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+      socket.off("room-users-update");
+      socket.off("contest-started");
+    };
   }, [code, user, router]);
 
-  const copyRoomCode = () => { navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 2000); };
-  const handleStartContest = () => {
-    if (!user || !room || user.id !== room.hostId) return;
-    getSocket().emit("start-contest", { roomCode: code, userId: user.id });
+  const copyRoomCode = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
+
+  const handleStartContest = async () => {
+    if (!user || !room || user.id !== room.hostId || starting) return;
+    setStarting(true);
+    try {
+      // 1. Emit socket event
+      const socket = getSocket();
+      socket.emit("start-contest", { roomCode: code, userId: user.id });
+
+      // 2. Call HTTP start endpoint (Vercel serverless fallback)
+      const res = await fetch(`/api/rooms/${code}/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id }),
+      });
+
+      if (res.ok) {
+        router.push(`/arena/${code}`);
+      }
+    } catch (e) {
+      console.error("Error starting contest:", e);
+    } finally {
+      setStarting(false);
+    }
+  };
+
   const handleLeaveRoom = async () => {
     if (!user) { router.push("/"); return; }
     try {
       const socket = getSocket();
       socket.emit("leave-room", { roomCode: code, handle: user.handle, userId: user.id });
-      await fetch(`/api/rooms/${code}/leave`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: user.id }) });
+      await fetch(`/api/rooms/${code}/leave`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id }),
+      });
     } catch (e) { console.error("Error leaving room:", e); }
     finally { router.push("/"); }
   };
@@ -109,10 +178,31 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
   const player1 = isSupervised ? room.player1 : room.host;
   const player2 = isSupervised ? room.player2 : room.guest;
 
-  const player1Connected = player1 ? connectedPlayers.some(p => p.userId === player1.id) : false;
-  const player2Connected = player2 ? connectedPlayers.some(p => p.userId === player2.id) : false;
+  // Improved presence check logic:
+  // A player is connected if:
+  // 1. Current user viewing this lobby is that player, OR
+  // 2. Socket connectedPlayers has matching userId or handle, OR
+  // 3. Player exists in the room record in DB
+  const isUserP1 = user && player1 && user.id === player1.id;
+  const isUserP2 = user && player2 && user.id === player2.id;
 
-  const canStart = isHost && player1 && player2 && player1Connected && player2Connected;
+  const player1Connected = Boolean(
+    player1 && (
+      isUserP1 ||
+      connectedPlayers.some(p => p.userId === player1.id || (p.handle && p.handle.toLowerCase() === player1.handle.toLowerCase())) ||
+      (!isSupervised && room.hostId === player1.id) // Host is present in room
+    )
+  );
+
+  const player2Connected = Boolean(
+    player2 && (
+      isUserP2 ||
+      connectedPlayers.some(p => p.userId === player2.id || (p.handle && p.handle.toLowerCase() === player2.handle.toLowerCase())) ||
+      room.guestId === player2.id // Guest joined room
+    )
+  );
+
+  const canStart = Boolean(isHost && player1 && player2 && player1Connected && player2Connected);
 
   const PlayerCard = ({ player, roleTitle, connected, isWaiting = false }: { player: any; roleTitle: string; connected: boolean; isWaiting?: boolean }) => (
     <div className="neu-card" style={{ padding: "28px 24px" }}>
@@ -120,7 +210,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
         <span className="neu-chip" style={{
           background: roleTitle.includes("HOST") ? "var(--indigo)" : "var(--accent)",
           color: "#fff",
-          boxShadow: `0 0 10px ${roleTitle.includes("HOST") ? "rgba(129,140,248,0.4)" : "var(--accent-glow)"}`,
+          boxShadow: `0 0 10px ${roleTitle.includes("HOST") ? "rgba(99,102,241,0.4)" : "var(--accent-glow)"}`,
         }}>
           {roleTitle}
         </span>
@@ -245,7 +335,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
         {isHost ? (
           <button
             onClick={handleStartContest}
-            disabled={!canStart}
+            disabled={!canStart || starting}
             className={canStart ? "neu-btn-primary neu-btn" : "neu-btn"}
             style={{
               width: "100%", padding: "18px 28px", fontSize: "1rem", borderRadius: "var(--r-lg)",
@@ -253,7 +343,9 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
             }}
           >
             <Play style={{ width: 18, height: 18 }} />
-            {canStart
+            {starting
+              ? "Starting Contest..."
+              : canStart
               ? "START CONTEST NOW"
               : (!player1 || !player2)
               ? (isSupervised ? "Waiting for Both Contestants to Join..." : "Waiting for Guest Player...")
