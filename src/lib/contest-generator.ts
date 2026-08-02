@@ -13,6 +13,7 @@ export interface GenerateContestOptions {
   maxRating: number;
   allowedTags: string[];
   excludedTags: string[];
+  ratings?: number[]; // NEW: array of exact ratings
   seed?: string;
   hostHandle: string;
   guestHandle?: string;
@@ -40,8 +41,17 @@ function seededRandom(seedStr: string) {
     h ^= h >>> 7;
     h += h << 3;
     h ^= h >>> 17;
-    return (h += h << 5) >>> 0 / 4294967296;
+    return ((h += h << 5) >>> 0) / 4294967296;
   };
+}
+
+function shuffleArray<T>(array: T[], randomFn: () => number): T[] {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(randomFn() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
 
 /**
@@ -75,68 +85,94 @@ export function filterAndSelectProblems(
     maxRating,
     allowedTags,
     excludedTags,
+    ratings,
     seed,
   } = options;
 
+  const randomFn = seed ? seededRandom(seed) : Math.random;
   const seenKeys = new Set<string>();
-  const validCandidates: CFProblem[] = [];
 
-  for (const prob of allProblems) {
-    if (!prob.contestId || !prob.index || !prob.name) continue;
-
-    // 1. Ignore Gym problems (Codeforces official contests have contestId < 10000)
-    if (prob.contestId >= 10000) continue;
+  const isValidCandidate = (prob: CFProblem, checkRating: boolean, targetRating?: number) => {
+    if (!prob.contestId || !prob.index || !prob.name) return false;
+    if (prob.contestId >= 10000) return false;
 
     const formattedIndex = String(prob.index).trim().toUpperCase();
     const key = `${prob.contestId}-${formattedIndex}`;
-
-    // 2. Ignore duplicate problems
-    if (seenKeys.has(key)) continue;
-    seenKeys.add(key);
-
-    // 3. Ignore interactive/special problems
+    
+    if (seenKeys.has(key)) return false;
+    
     const tags = prob.tags || [];
     if (
       tags.includes("*special") ||
       tags.includes("interactive") ||
       prob.name.toLowerCase().includes("interactive")
-    ) {
-      continue;
-    }
-
-    // 4. Rating range check
+    ) return false;
+    
     const rating = prob.rating || 1200;
-    if (rating < minRating || rating > maxRating) continue;
 
-    // 5. Excluded tags check
-    if (excludedTags.length > 0) {
-      const hasExcluded = excludedTags.some((exTag) => tags.includes(exTag));
-      if (hasExcluded) continue;
+    if (checkRating) {
+      if (targetRating !== undefined) {
+         if (rating !== targetRating) return false;
+      } else {
+         if (rating < minRating || rating > maxRating) return false;
+      }
     }
 
-    // 6. Allowed tags check
+    if (excludedTags.length > 0) {
+      if (excludedTags.some((exTag) => tags.includes(exTag))) return false;
+    }
+
     if (allowedTags.length > 0) {
-      const hasAllowed = allowedTags.some((alTag) => tags.includes(alTag));
-      if (!hasAllowed) continue;
+      if (!allowedTags.some((alTag) => tags.includes(alTag))) return false;
     }
 
     // 7. VERIFICATION: Neither player has solved this problem before!
-    if (solvedKeysHost.has(key) || solvedKeysGuest.has(key)) {
-      continue;
-    }
+    if (solvedKeysHost.has(key) || solvedKeysGuest.has(key)) return false;
 
-    validCandidates.push(prob);
+    return true;
+  };
+
+  const getBestCandidates = (candidates: CFProblem[], neededCount: number) => {
+    const oldCandidates = candidates.filter((p) => p.contestId <= 1500);
+    const poolToUse = oldCandidates.length >= neededCount ? oldCandidates : candidates;
+    return shuffleArray(poolToUse, randomFn);
+  };
+
+  if (ratings && ratings.length > 0) {
+    const selectedProblems: CFProblem[] = [];
+    
+    for (const targetRating of ratings) {
+        let candidates = allProblems.filter((p) => isValidCandidate(p, true, targetRating));
+        
+        // If not found, fallback to targetRating ± 100
+        if (candidates.length === 0) {
+           candidates = allProblems.filter((p) => isValidCandidate(p, false));
+           candidates = candidates.filter(p => {
+               const r = p.rating || 1200;
+               return Math.abs(r - targetRating) <= 100;
+           });
+        }
+
+        const shuffled = getBestCandidates(candidates, 1);
+        if (shuffled.length > 0) {
+            const picked = shuffled[0];
+            selectedProblems.push(picked);
+            seenKeys.add(`${picked.contestId}-${String(picked.index).trim().toUpperCase()}`);
+        }
+    }
+    
+    return selectedProblems.map((prob, idx) => ({
+      problemKey: `${prob.contestId}-${String(prob.index).trim().toUpperCase()}`,
+      name: prob.name,
+      rating: prob.rating || 1200,
+      tags: prob.tags || [],
+      indexInContest: idx,
+    }));
   }
 
-  // PREFER OLD PROBLEMS: Filter/Sort candidates to favor older classic Codeforces contests (e.g. contestId <= 1500)
-  const oldCandidates = validCandidates.filter((p) => p.contestId <= 1500);
-  const poolToUse = oldCandidates.length >= problemCount ? oldCandidates : validCandidates;
-
-  // Shuffle pool using seed if provided, or Math.random
-  const randomFn = seed ? seededRandom(seed) : Math.random;
-  const shuffled = [...poolToUse].sort(() => randomFn() - 0.5);
-
-  // Pick required count, sorting by difficulty/rating ascending
+  // RANGE MODE
+  const validCandidates = allProblems.filter(p => isValidCandidate(p, true));
+  const shuffled = getBestCandidates(validCandidates, problemCount);
   const selected = shuffled.slice(0, problemCount);
   selected.sort((a, b) => (a.rating || 0) - (b.rating || 0));
 

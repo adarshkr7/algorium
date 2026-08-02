@@ -6,8 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -22,6 +23,8 @@ model User {
   losses            Int            @default(0)
   draws             Int            @default(0)
   createdAt         DateTime       @default(now())
+  email             String?        @unique
+  passwordHash      String?
   verificationToken String?
   tokenExpiresAt    DateTime?
 

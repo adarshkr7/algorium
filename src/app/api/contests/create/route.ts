@@ -17,6 +17,7 @@ export async function POST(req: Request) {
       maxRating = 1600,
       allowedTags = [],
       excludedTags = [],
+      ratings = undefined,
       seed = "",
     } = body;
 
@@ -26,6 +27,9 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    const actualMinRating = ratings && ratings.length > 0 ? Math.min(...ratings) : Number(minRating);
+    const actualMaxRating = ratings && ratings.length > 0 ? Math.max(...ratings) : Number(maxRating);
 
     // 1. Generate unique 6-character room code
     let code = generateRoomCode();
@@ -39,12 +43,13 @@ export async function POST(req: Request) {
     const generatedProblems = await generateContest({
       name,
       mode,
-      problemCount: Number(problemCount),
+      problemCount: ratings && ratings.length > 0 ? ratings.length : Number(problemCount),
       durationMinutes: Number(durationMinutes),
-      minRating: Number(minRating),
-      maxRating: Number(maxRating),
+      minRating: actualMinRating,
+      maxRating: actualMaxRating,
       allowedTags: Array.isArray(allowedTags) ? allowedTags : [],
       excludedTags: Array.isArray(excludedTags) ? excludedTags : [],
+      ratings: Array.isArray(ratings) && ratings.length > 0 ? ratings : undefined,
       seed: seed || code,
       hostHandle,
     });
@@ -73,8 +78,8 @@ export async function POST(req: Request) {
             mode,
             problemCount: generatedProblems.length,
             durationMinutes: Number(durationMinutes),
-            minRating: Number(minRating),
-            maxRating: Number(maxRating),
+            minRating: actualMinRating,
+            maxRating: actualMaxRating,
             allowedTags: JSON.stringify(allowedTags),
             excludedTags: JSON.stringify(excludedTags),
             seed: seed || code,

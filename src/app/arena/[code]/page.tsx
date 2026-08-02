@@ -9,7 +9,7 @@ import {
   Trophy, AlertCircle, Activity, LogOut, Eye,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
-import { getSocket } from "@/lib/socket";
+import { createClient } from "@/utils/supabase/client";
 
 const DEFAULT_AVATAR = "https://codeforces.org/s/0/images/user-alt.png";
 
@@ -18,6 +18,8 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
   const code = rawCode.toUpperCase();
   const { user } = useUser();
   const router = useRouter();
+
+  const [supabase] = useState(() => createClient());
 
   const [room, setRoom] = useState<any>(null);
   const [contest, setContest] = useState<any>(null);
@@ -32,99 +34,159 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
   const [blitzUnlockCountdown, setBlitzUnlockCountdown] = useState<number | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
+    let evalInterval: NodeJS.Timeout | null = null;
+    let channel: any = null;
+
     async function loadArenaData() {
       try {
         const res = await fetch(`/api/rooms/${code}`);
         const data = await res.json();
-        if (!res.ok || !data.room || !data.room.contest) { router.push("/"); return; }
+        if (!res.ok || !data.room || !data.room.contest) {
+          if (res.status === 404) {
+            router.push("/");
+          }
+          return;
+        }
 
         const rm = data.room;
         const ct = rm.contest;
 
-        setRoom(rm);
-        setContest(ct);
-        setProblems(ct.problems || []);
+        if (isMounted) {
+          setRoom(rm);
+          setContest(ct);
+          setProblems(ct.problems || []);
 
-        const initialActions = (ct.submissions || [])
-          .slice()
-          .reverse()
-          .map((sub: any) => ({ type: "SUBMISSION", action: sub }));
-        setRecentActions(initialActions);
+          const initialActions = (ct.submissions || [])
+            .slice()
+            .reverse()
+            .map((sub: any) => ({ type: "SUBMISSION", action: sub }));
+          setRecentActions(initialActions);
 
-        if (ct.status === "FINISHED") setIsFinished(true);
+          if (ct.status === "FINISHED") setIsFinished(true);
 
-        if (ct.startTime) {
-          const start = new Date(ct.startTime).getTime();
-          const duration = ct.durationMinutes * 60 * 1000;
-          const end = start + duration;
-          const now = Date.now();
-          setRemainingSeconds(Math.max(0, Math.floor((end - now) / 1000)));
+          if (ct.startTime) {
+            const start = new Date(ct.startTime).getTime();
+            const duration = ct.durationMinutes * 60 * 1000;
+            const end = start + duration;
+            const now = Date.now();
+            setRemainingSeconds(Math.max(0, Math.floor((end - now) / 1000)));
+          }
         }
 
-        const socket = getSocket();
-        socket.emit("join-room", { roomCode: code, handle: user ? user.handle : "Guest", userId: user ? user.id : null });
+        channel = supabase.channel(`room-${code}`);
 
-        socket.on("new-recent-action", (item: any) => {
-          setRecentActions((prev) => [item, ...prev]);
-          if (item.type === "SUBMISSION") {
-            const sub = item.action;
-            const isMe = user && sub.userId === user.id;
-            const solverName = isMe ? "You" : sub.user?.handle || "Opponent";
-            if (sub.verdict === "OK") {
-              setNotification(`🎉 ${solverName} solved ${sub.problem?.name || "a problem"}!`);
-              setTimeout(() => setNotification(null), 5000);
-            } else {
-              setNotification(`⚠️ ${solverName} got ${sub.verdict} on ${sub.problem?.name}`);
-              setTimeout(() => setNotification(null), 4000);
-            }
-          }
-        });
+        channel
+          .on("broadcast", { event: "new-recent-action" }, (payload: any) => {
+            const item = payload.payload;
+            if (isMounted) {
+              setRecentActions((prev) => {
+                if (item.type === "SUBMISSION") {
+                  const subId = String(item.action?.id || item.action?.cfSubmissionId);
+                  const existsIdx = prev.findIndex(
+                    (p) => p.type === "SUBMISSION" && String(p.action?.id || p.action?.cfSubmissionId) === subId
+                  );
+                  if (existsIdx !== -1) {
+                    const updated = [...prev];
+                    updated[existsIdx] = item;
+                    return updated;
+                  }
+                }
+                return [item, ...prev];
+              });
 
-        socket.on("problems-update", ({ problems: updatedProblems }: { problems: any[] }) => {
-          setProblems(updatedProblems);
-        });
-
-        socket.on("scoreboard-update", ({ standings: st }: { standings: any }) => {
-          setStandings(st);
-        });
-
-        socket.on("blitz-problem-locked", ({ winnerHandle, nextIndex }: any) => {
-          setNotification(`⚡ ${winnerHandle} locked the current problem! Moving to Problem ${String.fromCharCode(65 + nextIndex)}...`);
-          setBlitzUnlockCountdown(3);
-          const interval = setInterval(() => {
-            setBlitzUnlockCountdown((prev) => {
-              if (prev === null || prev <= 1) {
-                clearInterval(interval);
-                setSelectedProblemIndex(nextIndex);
-                return null;
+              if (item.type === "SUBMISSION") {
+                const sub = item.action;
+                const isMe = user && sub.userId === user.id;
+                const solverName = isMe ? "You" : sub.user?.handle || "Opponent";
+                if (sub.verdict === "OK") {
+                  setNotification(`🎉 ${solverName} solved ${sub.problem?.name || "a problem"}!`);
+                  setTimeout(() => setNotification(null), 5000);
+                } else if (sub.verdict === "TESTING") {
+                  setNotification(`⏳ ${solverName} submitted solution for ${sub.problem?.name} (Testing...)`);
+                  setTimeout(() => setNotification(null), 4000);
+                } else {
+                  setNotification(`⚠️ ${solverName} got ${sub.verdict} on ${sub.problem?.name}`);
+                  setTimeout(() => setNotification(null), 4000);
+                }
               }
-              return prev - 1;
-            });
-          }, 1000);
-        });
+            }
+          })
+          .on("broadcast", { event: "problems-update" }, (payload: any) => {
+            if (isMounted) setProblems(payload.payload.problems);
+          })
+          .on("broadcast", { event: "scoreboard-update" }, (payload: any) => {
+            if (isMounted) setStandings(payload.payload.standings);
+          })
+          .on("broadcast", { event: "blitz-problem-locked" }, (payload: any) => {
+            if (isMounted) {
+              const { winnerHandle, nextIndex } = payload.payload;
+              setNotification(`⚡ ${winnerHandle} locked the current problem! Moving to Problem ${String.fromCharCode(65 + nextIndex)}...`);
+              setBlitzUnlockCountdown(3);
+              const interval = setInterval(() => {
+                setBlitzUnlockCountdown((prev) => {
+                  if (prev === null || prev <= 1) {
+                    clearInterval(interval);
+                    setSelectedProblemIndex(nextIndex);
+                    return null;
+                  }
+                  return prev - 1;
+                });
+              }, 1000);
+            }
+          })
+          .on("broadcast", { event: "contest-finished" }, (payload: any) => {
+            if (isMounted) {
+              setIsFinished(true);
+              setWinnerInfo(payload.payload);
+              if (user && payload.payload.winnerId === user.id) {
+                confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+              }
+            }
+          })
+          .subscribe();
 
-        socket.on("contest-finished", (result: any) => {
-          setIsFinished(true);
-          setWinnerInfo(result);
-          if (user && result.winnerId === user.id) {
-            confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-          }
-        });
-
-        return () => {
-          socket.off("new-recent-action");
-          socket.off("problems-update");
-          socket.off("scoreboard-update");
-          socket.off("blitz-problem-locked");
-          socket.off("contest-finished");
-        };
+        // Trigger Evaluation Engine & Sync State via API Polling for ALL connected clients
+        if (ct.status !== "FINISHED") {
+          evalInterval = setInterval(async () => {
+            try {
+              const evalRes = await fetch(`/api/contests/${ct.id}/evaluate`, { method: "POST" });
+              const evalData = await evalRes.json();
+              if (evalRes.ok && evalData && isMounted) {
+                if (evalData.standings) setStandings(evalData.standings);
+                if (evalData.problems) setProblems(evalData.problems);
+                if (evalData.submissions) {
+                  const actions = evalData.submissions.map((sub: any) => ({ type: "SUBMISSION", action: sub }));
+                  setRecentActions(actions);
+                }
+                if (evalData.contestStatus === "FINISHED") {
+                  setIsFinished(true);
+                  if (evalData.winnerInfo) {
+                    setWinnerInfo(evalData.winnerInfo);
+                    if (user && evalData.winnerInfo.winnerId === user.id) {
+                      confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              console.error("Evaluation fetch error:", err);
+            }
+          }, 4000);
+        }
       } catch (err) {
         console.error("Arena init error:", err);
       }
     }
 
     loadArenaData();
-  }, [code, user, router]);
+
+    return () => {
+      isMounted = false;
+      if (evalInterval) clearInterval(evalInterval);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [code, user, router, supabase]);
 
   useEffect(() => {
     if (isFinished || remainingSeconds <= 0) return;
@@ -144,8 +206,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
   const handleLeaveContest = async () => {
     if (!user) { router.push("/"); return; }
     try {
-      const socket = getSocket();
-      socket.emit("leave-room", { roomCode: code, handle: user.handle, userId: user.id });
       await fetch(`/api/rooms/${code}/leave`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -162,6 +222,13 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
     const m = Math.floor(secs / 60);
     const s = secs % 60;
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const formatActionTime = (isoString?: string) => {
+    if (!isoString) return "";
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
   if (!room || !contest) {
@@ -229,7 +296,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          {/* Timer */}
           <div className="neu-inset" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 18px", borderRadius: "var(--r-md)" }}>
             <Clock style={{ width: 18, height: 18, color: remainingSeconds < 300 ? "var(--danger)" : "var(--accent)" }} />
             <div>
@@ -246,7 +312,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         </div>
       </div>
 
-      {/* Supervisor banner if supervisor */}
       {isSupervisor && (
         <div className="neu-card animate-fade-in-up" style={{ padding: "14px 20px", background: "var(--warning-soft)", boxShadow: "var(--neu-shadow-sm)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.85rem", fontWeight: 700, color: "var(--warning)" }}>
@@ -256,7 +321,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         </div>
       )}
 
-      {/* Live Notifications */}
       {notification && (
         <div className="neu-card animate-fade-in-up" style={{ padding: "14px 20px", background: "var(--accent-glow)", boxShadow: "var(--neu-shadow-sm)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.85rem", fontWeight: 700, color: "var(--accent)" }}>
@@ -272,11 +336,8 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         </div>
       )}
 
-      {/* Responsive Main Grid */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 24 }}>
-        {/* Left Column: Problem Tabs & Active Problem */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {/* Tabs */}
           <div className="neu-card" style={{ padding: "12px 16px", display: "flex", gap: 10, overflowX: "auto" }}>
             {problems.map((prob, idx) => {
               const status = getProblemStatus(prob);
@@ -310,7 +371,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
             })}
           </div>
 
-          {/* Active Problem Card */}
           {selectedProblem && (
             <div className="neu-card" style={{ padding: "28px 32px", display: "flex", flexDirection: "column", gap: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, borderBottom: "1px solid var(--shadow-dark)", paddingBottom: 20, flexWrap: "wrap" }}>
@@ -350,7 +410,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                 </a>
               </div>
 
-              {/* Problem status banner */}
               <div className="neu-inset" style={{ padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.82rem", flexWrap: "wrap", gap: 8 }}>
                 <span className="neu-label">Problem Status</span>
                 {(() => {
@@ -380,7 +439,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                 })()}
               </div>
 
-              {/* Instructions */}
               <div className="neu-inset" style={{ padding: "16px 20px", display: "flex", gap: 12, alignItems: "flex-start" }}>
                 <AlertCircle style={{ width: 18, height: 18, color: "var(--accent)", flexShrink: 0, marginTop: 2 }} />
                 <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)", lineHeight: 1.6 }}>
@@ -395,16 +453,13 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
           )}
         </div>
 
-        {/* Right Column: Scoreboard & Recent Actions */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {/* Scoreboard */}
           <div className="neu-card" style={{ padding: "24px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
             <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: "0.85rem", color: "var(--text-primary)", margin: 0, textTransform: "uppercase" }}>
               <Trophy style={{ width: 16, height: 16, color: "var(--warning)" }} /> Scoreboard
             </h3>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {/* Player 1 row */}
               <div className="neu-inset" style={{ padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <img src={player1?.avatar || DEFAULT_AVATAR} alt={player1?.handle || "Player 1"} style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} />
@@ -423,7 +478,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                 </div>
               </div>
 
-              {/* Player 2 row */}
               <div className="neu-inset" style={{ padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <img src={player2?.avatar || DEFAULT_AVATAR} alt={player2?.handle || "Player 2"} style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} />
@@ -444,7 +498,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
             </div>
           </div>
 
-          {/* Recent Actions */}
           <div className="neu-card" style={{ padding: "24px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
             <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: "0.85rem", color: "var(--text-primary)", margin: 0, textTransform: "uppercase" }}>
               <Activity style={{ width: 16, height: 16, color: "var(--accent)" }} /> Recent Actions
@@ -465,12 +518,19 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                           <span style={{ fontWeight: 700, fontSize: "0.8rem", color: "var(--text-primary)" }}>{sub.user?.handle || "User"}</span>
                           <span className="font-mono" style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block" }}>{sub.problem?.name || "Problem"}</span>
                         </div>
-                        <span className="neu-chip font-mono" style={{
-                          background: sub.verdict === "OK" ? "var(--success)" : "var(--danger)",
-                          color: "#fff", fontSize: "0.65rem", padding: "2px 8px",
-                        }}>
-                          {sub.verdict === "OK" ? "AC" : sub.verdict?.replace(/_/g, " ")}
-                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {sub.timeSubmitted && (
+                            <span className="font-mono" style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                              {formatActionTime(sub.timeSubmitted)}
+                            </span>
+                          )}
+                          <span className="neu-chip font-mono" style={{
+                            background: sub.verdict === "OK" ? "var(--success)" : sub.verdict === "TESTING" ? "var(--warning)" : "var(--danger)",
+                            color: "#fff", fontSize: "0.65rem", padding: "2px 8px",
+                          }}>
+                            {sub.verdict === "OK" ? "AC" : sub.verdict === "TESTING" ? "TESTING..." : sub.verdict?.replace(/_/g, " ")}
+                          </span>
+                        </div>
                       </div>
                     );
                   }
@@ -489,7 +549,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         </div>
       </div>
 
-      {/* Post Contest Modal */}
       {isFinished && (
         <div style={{
           position: "fixed", inset: 0, zIndex: 100,
@@ -507,7 +566,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
               </p>
             </div>
 
-            {/* Standings Breakdown */}
             <div className="neu-inset font-mono" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 10, textAlign: "left", fontSize: "0.8rem" }}>
               <div className="neu-label" style={{ marginBottom: 4 }}>Final Standings</div>
               <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--shadow-dark)", paddingBottom: 8 }}>

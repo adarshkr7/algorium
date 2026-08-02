@@ -22,8 +22,10 @@ function CreateContestPageInner() {
   const [mode, setMode] = useState<"BLITZ" | "CLASSIC">(initialMode);
   const [problemCount, setProblemCount] = useState(3);
   const [durationMinutes, setDurationMinutes] = useState(30);
+  const [ratingMode, setRatingMode] = useState<"RANGE" | "EXACT">("RANGE");
   const [minRating, setMinRating] = useState(800);
   const [maxRating, setMaxRating] = useState(1600);
+  const [exactRatings, setExactRatings] = useState<number[]>([800, 1000, 1200]);
   const [selectedAllowedTags, setSelectedAllowedTags] = useState<string[]>(["implementation","math"]);
   const [selectedExcludedTags, setSelectedExcludedTags] = useState<string[]>([]);
   const [seed, setSeed] = useState("");
@@ -35,6 +37,22 @@ function CreateContestPageInner() {
 
   const toggleExcludedTag = (tag: string) =>
     setSelectedExcludedTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+
+  const handleProblemCountChange = (count: number) => {
+    setProblemCount(count);
+    setExactRatings(prev => {
+      const next = [...prev];
+      if (count > next.length) {
+        const lastVal = next.length > 0 ? next[next.length - 1] : 1200;
+        while (next.length < count) {
+          next.push(Math.min(3500, lastVal + 100)); // pad with increasing rating
+        }
+      } else {
+        next.length = count;
+      }
+      return next;
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,6 +73,7 @@ function CreateContestPageInner() {
           durationMinutes,
           minRating,
           maxRating,
+          ratings: ratingMode === "EXACT" ? exactRatings : undefined,
           allowedTags: selectedAllowedTags,
           excludedTags: selectedExcludedTags,
           seed,
@@ -75,9 +94,9 @@ function CreateContestPageInner() {
   return (
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
       {/* Header */}
-      <div className="animate-fade-in-up" style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 36 }}>
-        <span className="neu-icon" style={{ width: 56, height: 56, background: "linear-gradient(135deg, var(--accent), var(--accent-dark))", flexShrink: 0, boxShadow: "var(--neu-shadow), 0 0 20px var(--accent-glow)" }}>
-          <Swords style={{ width: 26, height: 26, color: "#fff" }} />
+      <div className="animate-blur-reveal" style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 36 }}>
+        <span className="neu-icon" style={{ width: 56, height: 56, background: "var(--bg-invert)", border: "none", flexShrink: 0 }}>
+          <Swords style={{ width: 26, height: 26, color: "var(--text-invert)" }} />
         </span>
         <div>
           <h1 style={{ fontWeight: 800, fontSize: "1.8rem", color: "var(--text-primary)", margin: 0, letterSpacing: "-0.02em" }}>
@@ -94,8 +113,8 @@ function CreateContestPageInner() {
         <div className="animate-shake" style={{
           display: "flex", alignItems: "center", gap: 12,
           padding: "14px 18px", borderRadius: "var(--r-md)",
-          background: "var(--danger-soft)",
-          boxShadow: "var(--neu-inset-sm)",
+          background: "var(--bg-subtle)",
+          border: "1px solid var(--danger)",
           marginBottom: 24, fontSize: "0.85rem",
           color: "var(--danger)", fontWeight: 600,
         }}>
@@ -104,10 +123,10 @@ function CreateContestPageInner() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <form onSubmit={handleSubmit} className="stagger-children" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
         {/* Contest Name */}
-        <div className="neu-card animate-fade-in-up" style={S.card}>
+        <div className="neu-card" style={S.card}>
           <label className="neu-label" style={S.label}>Contest Name</label>
           <input
             type="text" value={name}
@@ -118,7 +137,7 @@ function CreateContestPageInner() {
         </div>
 
         {/* HOSTING TYPE SELECTOR */}
-        <div className="neu-card animate-fade-in-up" style={{ ...S.card, animationDelay: "40ms" }}>
+        <div className="neu-card" style={S.card}>
           <label className="neu-label" style={S.label}>Hosting Type</label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             {([
@@ -143,24 +162,22 @@ function CreateContestPageInner() {
                 style={{
                   display: "flex", alignItems: "flex-start", gap: 12,
                   padding: "18px 20px", borderRadius: "var(--r-md)",
-                  border: "none", cursor: "pointer", textAlign: "left",
+                  cursor: "pointer", textAlign: "left",
                   transition: "all var(--t-base)",
-                  background: hostingType === h.id ? h.color : "var(--neu-bg)",
-                  boxShadow: hostingType === h.id
-                    ? `var(--neu-inset), 0 0 16px ${h.glow}`
-                    : "var(--neu-shadow-sm)",
-                  color: hostingType === h.id ? "#fff" : "var(--text-secondary)",
+                  background: "transparent",
+                  border: `1px solid ${hostingType === h.id ? "var(--text-primary)" : "var(--border)"}`,
+                  color: hostingType === h.id ? "var(--text-primary)" : "var(--text-secondary)",
                 }}
               >
                 <span className="neu-icon" style={{
                   width: 38, height: 38, flexShrink: 0,
-                  background: hostingType === h.id ? "rgba(255,255,255,0.2)" : "var(--neu-card)",
-                  boxShadow: hostingType === h.id ? "none" : "var(--neu-shadow-sm)",
+                  background: hostingType === h.id ? "var(--bg-hover)" : "var(--bg-subtle)",
+                  border: hostingType === h.id ? "none" : "1px solid var(--border)",
                 }}>
                   {h.icon}
                 </span>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: 4, color: hostingType === h.id ? "#fff" : "var(--text-primary)" }}>
+                  <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: 4, color: "var(--text-primary)" }}>
                     {h.label}
                   </div>
                   <div style={{ fontSize: "0.75rem", lineHeight: 1.5 }}>{h.desc}</div>
@@ -171,7 +188,7 @@ function CreateContestPageInner() {
         </div>
 
         {/* Mode Selector */}
-        <div className="neu-card animate-fade-in-up" style={{ ...S.card, animationDelay: "80ms" }}>
+        <div className="neu-card" style={S.card}>
           <label className="neu-label" style={S.label}>Contest Mode</label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             {([
@@ -194,24 +211,22 @@ function CreateContestPageInner() {
                 style={{
                   display: "flex", alignItems: "flex-start", gap: 12,
                   padding: "18px 20px", borderRadius: "var(--r-md)",
-                  border: "none", cursor: "pointer", textAlign: "left",
+                  cursor: "pointer", textAlign: "left",
                   transition: "all var(--t-base)",
-                  background: mode === m.id ? m.color : "var(--neu-bg)",
-                  boxShadow: mode === m.id
-                    ? `var(--neu-inset), 0 0 16px ${m.glow}`
-                    : "var(--neu-shadow-sm)",
-                  color: mode === m.id ? "#fff" : "var(--text-secondary)",
+                  background: "transparent",
+                  border: `1px solid ${mode === m.id ? "var(--text-primary)" : "var(--border)"}`,
+                  color: mode === m.id ? "var(--text-primary)" : "var(--text-secondary)",
                 }}
               >
                 <span className="neu-icon" style={{
                   width: 38, height: 38, flexShrink: 0,
-                  background: mode === m.id ? "rgba(255,255,255,0.2)" : "var(--neu-card)",
-                  boxShadow: mode === m.id ? "none" : "var(--neu-shadow-sm)",
+                  background: mode === m.id ? "var(--bg-hover)" : "var(--bg-subtle)",
+                  border: mode === m.id ? "none" : "1px solid var(--border)",
                 }}>
                   {m.icon}
                 </span>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: 4, color: mode === m.id ? "#fff" : "var(--text-primary)" }}>
+                  <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: 4, color: "var(--text-primary)" }}>
                     {m.label}
                   </div>
                   <div style={{ fontSize: "0.75rem", lineHeight: 1.5 }}>{m.desc}</div>
@@ -222,13 +237,13 @@ function CreateContestPageInner() {
         </div>
 
         {/* Problem Count & Duration */}
-        <div className="neu-card animate-fade-in-up" style={{ ...S.card, animationDelay: "120ms" }}>
+        <div className="neu-card" style={S.card}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
             <div>
               <label className="neu-label" style={{ ...S.label, display: "flex", alignItems: "center", gap: 6 }}>
                 <Hash style={{ width: 12, height: 12, color: "var(--success)" }} /> Number of Problems
               </label>
-              <select value={problemCount} onChange={(e) => setProblemCount(Number(e.target.value))}
+              <select value={problemCount} onChange={(e) => handleProblemCountChange(Number(e.target.value))}
                 className="neu-input neu-select font-mono">
                 <option value={1}>1 Problem (Speed Duel)</option>
                 <option value={2}>2 Problems</option>
@@ -252,34 +267,57 @@ function CreateContestPageInner() {
           </div>
         </div>
 
-        {/* Rating Range */}
-        <div className="neu-card animate-fade-in-up" style={{ ...S.card, animationDelay: "180ms" }}>
+        {/* Rating Configuration */}
+        <div className="neu-card" style={S.card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <label className="neu-label" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
-              <Sliders style={{ width: 12, height: 12, color: "var(--warning)" }} /> Problem Rating Range
+              <Sliders style={{ width: 12, height: 12, color: "var(--warning)" }} /> Rating Selection
             </label>
-            <span className="font-mono" style={{ fontSize: "0.8rem", color: "var(--accent)", fontWeight: 700 }}>
-              {minRating} — {maxRating}
-            </span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div>
-              <span className="neu-label" style={{ display: "block", marginBottom: 6 }}>Min Rating</span>
-              <input type="number" step={100} min={800} max={3500} value={minRating}
-                onChange={(e) => setMinRating(Number(e.target.value))}
-                className="neu-input font-mono" />
-            </div>
-            <div>
-              <span className="neu-label" style={{ display: "block", marginBottom: 6 }}>Max Rating</span>
-              <input type="number" step={100} min={800} max={3500} value={maxRating}
-                onChange={(e) => setMaxRating(Number(e.target.value))}
-                className="neu-input font-mono" />
+            <div style={{ display: "flex", background: "var(--neu-bg)", padding: 4, borderRadius: "var(--r-md)", gap: 4 }}>
+              <button type="button" onClick={() => setRatingMode("RANGE")} className={ratingMode === "RANGE" ? "neu-btn-primary neu-btn" : "neu-btn"} style={{ padding: "4px 12px", fontSize: "0.75rem", border: "none" }}>Range</button>
+              <button type="button" onClick={() => setRatingMode("EXACT")} className={ratingMode === "EXACT" ? "neu-btn-primary neu-btn" : "neu-btn"} style={{ padding: "4px 12px", fontSize: "0.75rem", border: "none" }}>Exact</button>
             </div>
           </div>
+          
+          {ratingMode === "RANGE" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div>
+                <span className="neu-label" style={{ display: "block", marginBottom: 6 }}>Min Rating</span>
+                <input type="number" step={100} min={800} max={3500} value={minRating}
+                  onChange={(e) => setMinRating(Number(e.target.value))}
+                  className="neu-input font-mono" />
+              </div>
+              <div>
+                <span className="neu-label" style={{ display: "block", marginBottom: 6 }}>Max Rating</span>
+                <input type="number" step={100} min={800} max={3500} value={maxRating}
+                  onChange={(e) => setMaxRating(Number(e.target.value))}
+                  className="neu-input font-mono" />
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: problemCount > 3 ? "1fr 1fr" : "1fr", gap: 12 }}>
+              {exactRatings.map((rating, idx) => (
+                <div key={idx} style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--neu-bg)", padding: "10px 14px", borderRadius: "var(--r-md)", boxShadow: "var(--neu-inset-sm)" }}>
+                  <span className="font-mono" style={{ fontSize: "0.8rem", color: "var(--text-secondary)", fontWeight: 700, width: 24 }}>P{idx + 1}</span>
+                  <input type="range" min={800} max={3500} step={100} value={rating}
+                    onChange={(e) => {
+                      const newRatings = [...exactRatings];
+                      newRatings[idx] = Number(e.target.value);
+                      setExactRatings(newRatings);
+                    }}
+                    style={{ flex: 1, accentColor: "var(--accent)" }}
+                  />
+                  <span className="font-mono" style={{ fontSize: "0.85rem", color: "var(--accent)", fontWeight: 700, width: 44, textAlign: "right" }}>
+                    {rating}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Allowed Tags */}
-        <div className="neu-card animate-fade-in-up" style={{ ...S.card, animationDelay: "240ms" }}>
+        <div className="neu-card" style={S.card}>
           <label className="neu-label" style={{ ...S.label, display: "flex", alignItems: "center", gap: 6 }}>
             <Tag style={{ width: 12, height: 12, color: "var(--success)" }} /> Allowed Tags
           </label>
@@ -296,7 +334,7 @@ function CreateContestPageInner() {
         </div>
 
         {/* Excluded Tags */}
-        <div className="neu-card animate-fade-in-up" style={{ ...S.card, animationDelay: "300ms" }}>
+        <div className="neu-card" style={S.card}>
           <label className="neu-label" style={{ ...S.label, display: "flex", alignItems: "center", gap: 6 }}>
             <Tag style={{ width: 12, height: 12, color: "var(--danger)" }} /> Excluded Tags (Optional)
           </label>
@@ -313,7 +351,7 @@ function CreateContestPageInner() {
         </div>
 
         {/* Seed */}
-        <div className="neu-card animate-fade-in-up" style={{ ...S.card, animationDelay: "360ms" }}>
+        <div className="neu-card" style={S.card}>
           <label className="neu-label" style={S.label}>Random Seed (Optional)</label>
           <input
             type="text"
@@ -327,8 +365,8 @@ function CreateContestPageInner() {
         {/* Submit */}
         <button
           type="submit" disabled={loading}
-          className="neu-btn-primary neu-btn animate-fade-in-up"
-          style={{ width: "100%", padding: "18px 28px", fontSize: "1rem", borderRadius: "var(--r-lg)", animationDelay: "420ms" }}
+          className="neu-btn-primary neu-btn"
+          style={{ width: "100%", padding: "18px 28px", fontSize: "1rem", borderRadius: "var(--r-md)" }}
         >
           {loading ? (
             <span>Generating Official Codeforces Problems...</span>

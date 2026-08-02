@@ -10,39 +10,65 @@ import {
 import { useUser } from "@/context/UserContext";
 import { useTheme } from "@/context/ThemeContext";
 
-type LoginStep = "handle" | "verify";
+type LoginStep = "handle" | "password" | "verify" | "register";
 
 export const Navbar: React.FC = () => {
   const { user, setUser, logout } = useUser();
   const { theme, toggleTheme } = useTheme();
   const [handleInput, setHandleInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [emailInput, setEmailInput] = useState("");
+  const [passwordToken, setPasswordToken] = useState("");
+  
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [step, setStep] = useState<LoginStep>("handle");
   const [pendingHandle, setPendingHandle] = useState("");
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const resetModal = () => {
-    setStep("handle"); setHandleInput(""); setPendingHandle("");
-    setToken(""); setError(null); setCopied(false); setLoading(false);
+    setStep("handle"); setHandleInput(""); setPasswordInput(""); setEmailInput("");
+    setPendingHandle(""); setPasswordToken("");
+    setToken(""); setError(null); setLoading(false);
   };
   const closeModal = () => { setShowLoginModal(false); resetModal(); };
 
-  const handleInitiate = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleInitiate = async (e: React.FormEvent, forceVerify = false) => {
+    if (e) e.preventDefault();
     if (!handleInput.trim()) return;
     setLoading(true); setError(null);
     try {
       const res = await fetch("/api/users/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ handle: handleInput.trim() }),
+        body: JSON.stringify({ handle: handleInput.trim(), forceVerify }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to initiate login");
-      setPendingHandle(data.handle); setToken(data.token); setStep("verify");
+      setPendingHandle(data.handle);
+      if (data.step === "password") {
+        setStep("password");
+      } else {
+        setToken(data.token);
+        setStep("verify");
+      }
+    } catch (err: any) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch("/api/users/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ handle: pendingHandle, password: passwordInput }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Authentication failed");
+      setUser(data.user); closeModal();
     } catch (err: any) { setError(err.message); }
     finally { setLoading(false); }
   };
@@ -57,30 +83,43 @@ export const Navbar: React.FC = () => {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Verification failed");
+      setPasswordToken(data.passwordToken);
+      setStep("register");
+    } catch (err: any) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailInput.trim() || !passwordInput) return;
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch("/api/users/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ handle: pendingHandle, email: emailInput, password: passwordInput, passwordToken }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Registration failed");
       setUser(data.user); closeModal();
     } catch (err: any) { setError(err.message); }
     finally { setLoading(false); }
   };
 
-  const copyToken = () => {
-    navigator.clipboard.writeText(token).then(() => {
-      setCopied(true); setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
   return (
     <>
-      {/* ── Floating Pill Navbar ── */}
+      {/* ── Premium Glass Navbar ── */}
       <header style={{
-        position: "sticky", top: "12px", zIndex: 50,
-        maxWidth: "1140px", width: "calc(100% - 32px)",
-        margin: "12px auto 0",
-        background: "var(--neu-card)",
-        borderRadius: "var(--r-xl)",
-        boxShadow: "var(--neu-shadow)",
-        padding: "12px 24px",
+        position: "sticky", top: 0, zIndex: 50,
+        width: "100%",
+        background: "rgba(var(--bg-main-rgb, 9, 9, 11), 0.7)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        borderBottom: "1px solid var(--border)",
+        padding: "0 24px",
+        height: "64px",
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        gap: "16px",
+        transition: "background var(--t-base)",
       }}>
         {/* Logo */}
         <Link href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none" }}>
@@ -89,19 +128,6 @@ export const Navbar: React.FC = () => {
           </span>
         </Link>
 
-        {/* Nav links */}
-        <nav style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          {user && (
-            <Link
-              href={`/profile/${encodeURIComponent(user.handle)}`}
-              className="neu-btn"
-              style={{ padding: "8px 18px", fontSize: "0.8rem" }}
-            >
-              <Trophy style={{ width: 14, height: 14, color: "var(--warning)" }} />
-              <span>My Stats</span>
-            </Link>
-          )}
-        </nav>
 
         {/* Right side: theme toggle + auth */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -239,13 +265,45 @@ export const Navbar: React.FC = () => {
                 </form>
               )}
 
-              {/* Step 2 */}
+              {/* Step: Password */}
+              {step === "password" && (
+                <form onSubmit={handleAuth} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                      <label className="neu-label" style={{ display: "block" }}>Password</label>
+                      <button type="button" onClick={() => handleInitiate(undefined as any, true)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: "0.75rem", cursor: "pointer", textDecoration: "underline" }}>
+                        Forgot Password?
+                      </button>
+                    </div>
+                    <input
+                      type="password"
+                      placeholder="Enter your password..."
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      className="neu-input"
+                      required autoFocus
+                    />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <button type="button" onClick={() => { setStep("handle"); setError(null); setPasswordInput(""); }} className="neu-btn" style={{ padding: "9px 16px", fontSize: "0.78rem" }}>
+                      Back
+                    </button>
+                    <div style={{ display: "flex", gap: "10px" }}>
+                      <button type="button" onClick={closeModal} className="neu-btn" style={{ padding: "10px 20px", fontSize: "0.82rem" }}>Cancel</button>
+                      <button type="submit" disabled={loading} className="neu-btn-primary neu-btn" style={{ padding: "10px 24px", fontSize: "0.82rem" }}>
+                        {loading ? "Logging in..." : "Log in"}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
+
+              {/* Step: CF Verify */}
               {step === "verify" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
                   <div className="neu-inset" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
                     <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", lineHeight: 1.6, margin: 0 }}>
-                      To prove ownership of <strong style={{ color: "var(--accent)" }}>{pendingHandle}</strong>, set your
-                      Codeforces <strong style={{ color: "var(--text-primary)" }}>First Name</strong> to this token:
+                      To prove ownership of <strong style={{ color: "var(--accent)" }}>{pendingHandle}</strong>, submit any code that results in a <strong style={{ color: "var(--danger)" }}>COMPILATION ERROR</strong> for problem <strong style={{ color: "var(--accent)" }}>{token}</strong>.
                     </p>
                     <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                       <div className="neu-inset-sm" style={{
@@ -256,35 +314,22 @@ export const Navbar: React.FC = () => {
                       }}>
                         {token}
                       </div>
-                      <button onClick={copyToken} className="neu-btn" style={{ padding: "12px", borderRadius: "50%", flexShrink: 0 }}>
-                        {copied
-                          ? <CheckCircle style={{ width: 16, height: 16, color: "var(--success)" }} />
-                          : <Copy style={{ width: 16, height: 16 }} />
-                        }
-                      </button>
+                      <a href={`https://codeforces.com/problemset/problem/${token.match(/^(\d+)/)?.[1]}/${token.match(/([A-Z]+)$/)?.[1]}`} target="_blank" rel="noopener noreferrer" className="neu-btn" style={{ padding: "12px", borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }} title="Go to Problem">
+                        <ExternalLink style={{ width: 16, height: 16 }} />
+                      </a>
                     </div>
                     <ol style={{ margin: 0, paddingLeft: "18px", fontSize: "0.77rem", color: "var(--text-secondary)", lineHeight: 1.8 }}>
-                      <li>Copy the token above</li>
-                      <li>
-                        Open{" "}
-                        <a href="https://codeforces.com/settings/general" target="_blank" rel="noopener noreferrer"
-                          style={{ color: "var(--accent)", textDecoration: "underline", display: "inline-flex", alignItems: "center", gap: 3 }}>
-                          CF Settings <ExternalLink style={{ width: 10, height: 10 }} />
-                        </a>
-                      </li>
-                      <li>Paste in <strong>First name</strong> field and Save</li>
-                      <li>Click <strong>Verify</strong> below — then revert your name ✓</li>
+                      <li>Click the icon above to open problem <strong>{token}</strong></li>
+                      <li>Write gibberish (e.g. <code style={{ color: "var(--accent)" }}>compile errrr</code>) and Submit</li>
+                      <li>Ensure you get a <strong>COMPILATION ERROR</strong></li>
+                      <li>Click <strong>Verify</strong> below</li>
                     </ol>
                     <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", fontFamily: "JetBrains Mono, monospace", margin: 0 }}>
-                      Token expires in 10 minutes
+                      Time limit: 5 minutes
                     </p>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <button
-                      onClick={() => { setStep("handle"); setError(null); }}
-                      className="neu-btn"
-                      style={{ padding: "9px 16px", fontSize: "0.78rem", gap: "6px" }}
-                    >
+                    <button onClick={() => { setStep("handle"); setError(null); }} className="neu-btn" style={{ padding: "9px 16px", fontSize: "0.78rem", gap: "6px" }}>
                       <RefreshCw style={{ width: 13, height: 13 }} /> Start over
                     </button>
                     <div style={{ display: "flex", gap: "10px" }}>
@@ -295,6 +340,38 @@ export const Navbar: React.FC = () => {
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* Step: Register */}
+              {step === "register" && (
+                <form onSubmit={handleRegister} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                  <div>
+                    <label className="neu-label" style={{ display: "block", marginBottom: "8px" }}>Email</label>
+                    <input
+                      type="email"
+                      placeholder="Enter your email..."
+                      value={emailInput}
+                      onChange={(e) => setEmailInput(e.target.value)}
+                      className="neu-input"
+                      style={{ marginBottom: "16px" }}
+                      required autoFocus
+                    />
+                    <label className="neu-label" style={{ display: "block", marginBottom: "8px" }}>Set Password</label>
+                    <input
+                      type="password"
+                      placeholder="Enter a new password..."
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      className="neu-input"
+                      required
+                    />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                    <button type="submit" disabled={loading} className="neu-btn-primary neu-btn" style={{ padding: "10px 24px", fontSize: "0.82rem" }}>
+                      {loading ? "Saving..." : "Create Account"}
+                    </button>
+                  </div>
+                </form>
               )}
             </div>
           </div>

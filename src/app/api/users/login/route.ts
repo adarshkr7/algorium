@@ -3,29 +3,33 @@ import { prisma } from "@/lib/prisma";
 import { fetchCFUserInfo } from "@/lib/codeforces";
 import crypto from "crypto";
 
-/** Generate a human-readable 6-char token like "CF_A3X9" */
-function generateToken(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no O/0/I/1 ambiguity
-  let token = "CF_";
-  for (let i = 0; i < 4; i++) {
-    token += chars[crypto.randomInt(0, chars.length)];
-  }
-  return token;
+const VERIFICATION_PROBLEMS = ["4A", "71A", "158A", "231A", "282A", "50A", "112A", "339A", "281A", "266A"];
+
+function getRandomProblem(): string {
+  return VERIFICATION_PROBLEMS[crypto.randomInt(0, VERIFICATION_PROBLEMS.length)];
 }
 
 /**
  * POST /api/users/login
- * Step 1: Verify the handle exists on CF, then issue a verification token.
- * The user must set their CF "First Name" to this token to prove ownership.
+ * Step 1: Verify the handle exists on CF, then issue a verification problem.
+ * The user must submit a compilation error to this problem to prove ownership.
  */
 export async function POST(req: Request) {
   try {
-    const { handle } = await req.json();
+    const { handle, forceVerify } = await req.json();
     if (!handle || typeof handle !== "string" || !handle.trim()) {
       return NextResponse.json({ error: "Codeforces handle is required" }, { status: 400 });
     }
 
     const trimmedHandle = handle.trim();
+    
+    // Check if user already exists and has a password
+    const existingUser = await prisma.user.findUnique({ where: { handle: trimmedHandle } });
+    if (existingUser?.passwordHash && !forceVerify) {
+      // They have an account, prompt for password
+      return NextResponse.json({ step: "password", handle: existingUser.handle });
+    }
+
     const cfUser = await fetchCFUserInfo(trimmedHandle);
 
     if (!cfUser) {
@@ -35,8 +39,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const token = generateToken();
-    const tokenExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const token = getRandomProblem();
+    const tokenExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
     // Upsert user record and store the pending verification token
     await prisma.user.upsert({
@@ -62,7 +66,7 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({ token, handle: cfUser.handle });
+    return NextResponse.json({ step: "verify", token, handle: cfUser.handle });
   } catch (error: any) {
     console.error("Login initiate error:", error);
     return NextResponse.json(

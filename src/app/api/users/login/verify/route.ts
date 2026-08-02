@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { fetchCFUserInfo } from "@/lib/codeforces";
+import crypto from "crypto";
 
 /**
  * POST /api/users/login/verify
@@ -38,39 +39,63 @@ export async function POST(req: Request) {
       );
     }
 
-    // Re-fetch CF profile to check the current firstName
+    // Re-fetch CF profile to check avatar/rating updates
     const cfUser = await fetchCFUserInfo(trimmedHandle);
     if (!cfUser) {
       return NextResponse.json({ error: "Could not reach Codeforces API. Try again." }, { status: 502 });
     }
 
-    // The Codeforces API returns firstName as a field on the raw user object.
-    // fetchCFUserInfo strips it, so we call the CF API directly here.
+    // Fetch the user's recent submissions
     const cfRawRes = await fetch(
-      `https://codeforces.com/api/user.info?handles=${encodeURIComponent(trimmedHandle)}`,
+      `https://codeforces.com/api/user.status?handle=${encodeURIComponent(trimmedHandle)}&from=1&count=15`,
       { cache: "no-store" }
     );
     const cfRaw = await cfRawRes.json();
 
-    if (cfRaw.status !== "OK" || !cfRaw.result || cfRaw.result.length === 0) {
-      return NextResponse.json({ error: "Could not reach Codeforces API. Try again." }, { status: 502 });
+    if (cfRaw.status !== "OK" || !cfRaw.result) {
+      return NextResponse.json(
+        { error: `Codeforces API Error: ${cfRaw.comment || "Could not fetch submissions"}. Please wait a few seconds and try again.` }, 
+        { status: 502 }
+      );
     }
 
-    const rawCFUser = cfRaw.result[0];
-    const firstName: string = (rawCFUser.firstName ?? "").trim();
+    const submissions = cfRaw.result;
+    
+    // The token is a problem ID like "4A" or "158A"
+    const targetProblem = dbUser.verificationToken;
+    const match = targetProblem.match(/^(\d+)([A-Z]+)$/);
+    if (!match) {
+      return NextResponse.json({ error: "Invalid verification token format." }, { status: 500 });
+    }
+    const targetContestId = parseInt(match[1]);
+    const targetIndex = match[2];
+    
+    const fiveMinutesAgo = Math.floor(Date.now() / 1000) - (5 * 60);
+    
+    // Verify a matching submission exists
+    const hasValidSubmission = submissions.some((sub: any) => {
+      return (
+        sub.verdict === "COMPILATION_ERROR" &&
+        sub.problem?.contestId === targetContestId &&
+        sub.problem?.index === targetIndex &&
+        sub.creationTimeSeconds >= fiveMinutesAgo
+      );
+    });
 
-    if (firstName !== dbUser.verificationToken) {
+    if (!hasValidSubmission) {
       return NextResponse.json(
         {
-          error: `First name mismatch. Expected "${dbUser.verificationToken}" but found "${firstName || "(empty)"}". ` +
-            "Make sure you saved your Codeforces profile after changing the First Name field.",
+          error: `Could not find a recent COMPILATION ERROR for problem ${targetProblem}. ` +
+            "Make sure you submit invalid code to the correct problem, and try clicking Verify again.",
         },
         { status: 403 }
       );
     }
 
-    // ✅ Ownership verified — update profile, clear token, return user
-    const verifiedUser = await prisma.user.update({
+    const passwordToken = crypto.randomUUID();
+
+    // ✅ Ownership verified — update profile, issue a password setup token
+    await prisma.user.update({
       where: { handle: trimmedHandle },
       data: {
         avatar: cfUser.avatar,
@@ -78,12 +103,12 @@ export async function POST(req: Request) {
         maxRating: cfUser.maxRating,
         rank: cfUser.rank,
         maxRank: cfUser.maxRank,
-        verificationToken: null,
-        tokenExpiresAt: null,
+        verificationToken: `SET_PASSWORD_${passwordToken}`,
+        tokenExpiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 mins to set password
       },
     });
 
-    return NextResponse.json({ user: verifiedUser });
+    return NextResponse.json({ step: "register", passwordToken, handle: trimmedHandle });
   } catch (error: any) {
     console.error("Login verify error:", error);
     return NextResponse.json(

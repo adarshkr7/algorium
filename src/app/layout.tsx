@@ -19,13 +19,15 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body
         style={{
-          backgroundColor: "var(--neu-bg)",
+          backgroundColor: "var(--bg-main)",
           color: "var(--text-primary)",
           minHeight: "100vh",
           display: "flex",
           flexDirection: "column",
         }}
       >
+        <div className="bg-ambient-glow" />
+        <div className="bg-grid" />
         <ThemeProvider>
           <UserProvider>
             <Navbar />

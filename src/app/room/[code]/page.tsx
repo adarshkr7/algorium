@@ -6,13 +6,16 @@ import {
   Swords, Copy, Check, Zap, Shield, Users, Play, WifiOff, AlertTriangle, LogOut, Eye,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
-import { getSocket } from "@/lib/socket";
+import { createClient } from "@/utils/supabase/client";
 
 export default function RoomLobbyPage({ params }: { params: Promise<{ code: string }> }) {
   const { code: rawCode } = use(params);
   const code = rawCode.toUpperCase();
   const { user } = useUser();
   const router = useRouter();
+  
+  // Need to ensure supabase client is created only once per render/mount
+  const [supabase] = useState(() => createClient());
 
   const [room, setRoom] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -21,9 +24,11 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
+  const channelRef = React.useRef<any>(null);
+
   useEffect(() => {
     let isMounted = true;
-    let pollInterval: NodeJS.Timeout;
+    let channel: any;
 
     async function fetchRoomState() {
       try {
@@ -36,7 +41,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
 
         let currentRoom = data.room;
 
-        if (currentRoom.status === "IN_PROGRESS") {
+        if (currentRoom.status === "IN_PROGRESS" || currentRoom.status === "FINISHED") {
           router.push(`/arena/${code}`);
           return;
         }
@@ -79,29 +84,49 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
 
     fetchRoomState();
 
-    // Setup HTTP Polling fallback every 3 seconds
-    pollInterval = setInterval(fetchRoomState, 3000);
-
-    // Setup Socket.IO connection
-    const socket = getSocket();
-    socket.emit("join-room", { roomCode: code, handle: user ? user.handle : "Guest", userId: user ? user.id : null });
-
-    socket.on("room-users-update", ({ players }: { players: any[] }) => {
-      if (isMounted) setConnectedPlayers(players);
-      fetchRoomState();
+    const trackingId = user ? user.id : 'guest-' + Math.random().toString(36).substring(7);
+    
+    channel = supabase.channel(`room-${code}`, {
+      config: {
+        presence: { key: trackingId },
+      },
     });
 
-    socket.on("contest-started", () => {
-      router.push(`/arena/${code}`);
-    });
+    channelRef.current = channel;
+
+    channel
+      .on("presence", { event: "sync" }, () => {
+        const presenceState = channel.presenceState();
+        const players: any[] = [];
+        for (const id in presenceState) {
+          // @ts-ignore
+          players.push(...presenceState[id]);
+        }
+        if (isMounted) {
+          setConnectedPlayers(players);
+          // Refetch room state silently in case someone joined
+          fetchRoomState();
+        }
+      })
+      .on("broadcast", { event: "contest-started" }, () => {
+        router.push(`/arena/${code}`);
+      })
+      .subscribe(async (status: string) => {
+        if (status === "SUBSCRIBED" && user) {
+          await channel.track({
+            userId: user.id,
+            handle: user.handle,
+            avatar: user.avatar,
+          });
+        }
+      });
 
     return () => {
       isMounted = false;
-      clearInterval(pollInterval);
-      socket.off("room-users-update");
-      socket.off("contest-started");
+      channelRef.current = null;
+      if (channel) supabase.removeChannel(channel);
     };
-  }, [code, user, router]);
+  }, [code, user, router, supabase]);
 
   const copyRoomCode = () => {
     navigator.clipboard.writeText(code);
@@ -113,11 +138,6 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
     if (!user || !room || user.id !== room.hostId || starting) return;
     setStarting(true);
     try {
-      // 1. Emit socket event
-      const socket = getSocket();
-      socket.emit("start-contest", { roomCode: code, userId: user.id });
-
-      // 2. Call HTTP start endpoint (Vercel serverless fallback)
       const res = await fetch(`/api/rooms/${code}/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -125,6 +145,13 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
       });
 
       if (res.ok) {
+        // Broadcast the start event using the subscribed channelRef
+        if (channelRef.current) {
+          await channelRef.current.send({
+            type: "broadcast",
+            event: "contest-started",
+          });
+        }
         router.push(`/arena/${code}`);
       }
     } catch (e) {
@@ -137,8 +164,6 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
   const handleLeaveRoom = async () => {
     if (!user) { router.push("/"); return; }
     try {
-      const socket = getSocket();
-      socket.emit("leave-room", { roomCode: code, handle: user.handle, userId: user.id });
       await fetch(`/api/rooms/${code}/leave`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -150,8 +175,8 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
 
   if (loading) return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60vh", gap: 16 }}>
-      <div className="neu-icon animate-float" style={{ width: 64, height: 64, background: "linear-gradient(135deg, var(--accent), var(--accent-dark))", boxShadow: "var(--neu-shadow), 0 0 24px var(--accent-glow)" }}>
-        <Swords style={{ width: 28, height: 28, color: "#fff" }} />
+      <div className="neu-icon" style={{ width: 64, height: 64, background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
+        <Swords style={{ width: 28, height: 28, color: "var(--text-primary)" }} />
       </div>
       <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>Connecting to Room {code}...</p>
     </div>
@@ -174,31 +199,23 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
   const isSupervised = room.hostingType === "SUPERVISED";
   const isHost = user && user.id === room.hostId;
 
-  // Competitor resolution
   const player1 = isSupervised ? room.player1 : room.host;
   const player2 = isSupervised ? room.player2 : room.guest;
 
-  // Improved presence check logic:
-  // A player is connected if:
-  // 1. Current user viewing this lobby is that player, OR
-  // 2. Socket connectedPlayers has matching userId or handle, OR
-  // 3. Player exists in the room record in DB
   const isUserP1 = user && player1 && user.id === player1.id;
   const isUserP2 = user && player2 && user.id === player2.id;
 
-  // If Socket disconnects (common on Vercel), fallback to database presence:
-  // If player1/player2 are assigned in the room object, we assume they are connected enough to start.
   const player1Connected = Boolean(
     player1 && (
       connectedPlayers.some(p => p.userId === player1.id || (p.handle && p.handle.toLowerCase() === player1.handle.toLowerCase())) ||
-      true // DB fallback: If they are assigned, let the host start
+      true 
     )
   );
 
   const player2Connected = Boolean(
     player2 && (
       connectedPlayers.some(p => p.userId === player2.id || (p.handle && p.handle.toLowerCase() === player2.handle.toLowerCase())) ||
-      true // DB fallback: If they are assigned, let the host start
+      true 
     )
   );
 
@@ -208,9 +225,9 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
     <div className="neu-card" style={{ padding: "28px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <span className="neu-chip" style={{
-          background: roleTitle.includes("HOST") ? "var(--indigo)" : "var(--accent)",
-          color: "#fff",
-          boxShadow: `0 0 10px ${roleTitle.includes("HOST") ? "rgba(99,102,241,0.4)" : "var(--accent-glow)"}`,
+          background: roleTitle.includes("HOST") ? "var(--bg-invert)" : "var(--bg-invert)",
+          color: "var(--text-invert)",
+          border: "none",
         }}>
           {roleTitle}
         </span>
@@ -244,10 +261,8 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
   );
 
   return (
-    <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
-
-      {/* Header */}
-      <div className="neu-card-lg animate-fade-in-up" style={{ padding: "32px 36px", display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
+    <div className="stagger-children" style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+      <div className="neu-card-lg" style={{ padding: "32px 36px", display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
             <span className="neu-chip" style={{ background: isSupervised ? "var(--warning)" : "var(--accent)", color: "#fff" }}>
@@ -262,7 +277,6 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {/* Code badge */}
           <div className="neu-inset" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", borderRadius: "var(--r-md)" }}>
             <div>
               <div className="neu-label" style={{ marginBottom: 2 }}>Room Code</div>
@@ -278,10 +292,9 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
         </div>
       </div>
 
-      {/* Supervisor banner if supervised mode */}
       {isSupervised && (
-        <div className="neu-card animate-fade-in-up" style={{ padding: "18px 24px", background: "var(--warning-soft)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--warning)", fontSize: "0.85rem", fontWeight: 600 }}>
+        <div className="neu-card" style={{ padding: "18px 24px", background: "var(--bg-subtle)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-primary)", fontSize: "0.85rem", fontWeight: 500 }}>
             <Eye style={{ width: 18, height: 18, flexShrink: 0 }} />
             <span>
               {isHost
@@ -292,8 +305,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
         </div>
       )}
 
-      {/* Player Cards */}
-      <div className="stagger-children" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20 }}>
         <PlayerCard
           player={player1}
           roleTitle={isSupervised ? "PLAYER 1" : "HOST (PLAYER 1)"}
@@ -308,8 +320,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
         />
       </div>
 
-      {/* Contest config */}
-      <div className="neu-card animate-fade-in-up" style={{ padding: "24px 28px" }}>
+      <div className="neu-card" style={{ padding: "24px 28px" }}>
         <h3 style={{ fontWeight: 800, fontSize: "0.82rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>
           Contest Configuration
         </h3>
@@ -330,7 +341,6 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
         </div>
       </div>
 
-      {/* Start button */}
       <div>
         {isHost ? (
           <button
@@ -338,8 +348,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
             disabled={!canStart || starting}
             className={canStart ? "neu-btn-primary neu-btn" : "neu-btn"}
             style={{
-              width: "100%", padding: "18px 28px", fontSize: "1rem", borderRadius: "var(--r-lg)",
-              ...(canStart ? { animation: "pulse-ring 2s infinite" } : {}),
+              width: "100%", padding: "18px 28px", fontSize: "1rem", borderRadius: "var(--r-md)",
             }}
           >
             <Play style={{ width: 18, height: 18 }} />

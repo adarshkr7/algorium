@@ -30,8 +30,8 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
 
   if (loading) return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60vh", gap: 16 }}>
-      <div className="neu-icon animate-float" style={{ width: 64, height: 64, background: "linear-gradient(135deg, var(--accent), var(--accent-dark))", boxShadow: "var(--neu-shadow), 0 0 24px var(--accent-glow)" }}>
-        <Trophy style={{ width: 30, height: 30, color: "#fff" }} />
+      <div className="neu-icon" style={{ width: 64, height: 64, background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
+        <Trophy style={{ width: 30, height: 30, color: "var(--text-primary)" }} />
       </div>
       <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>Loading profile for {handle}...</p>
     </div>
@@ -58,10 +58,10 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
   ];
 
   return (
-    <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+    <div className="stagger-children" style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
 
       {/* Profile banner */}
-      <div className="neu-card-lg animate-fade-in-up" style={{ padding: "36px 40px", display: "flex", flexDirection: "row", alignItems: "center", gap: 28, flexWrap: "wrap" }}>
+      <div className="neu-card-lg" style={{ padding: "36px 40px", display: "flex", flexDirection: "row", alignItems: "center", gap: 28, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flexShrink: 0 }}>
           <img
             src={user.avatar} alt={user.handle}
@@ -69,12 +69,11 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
           />
           <span style={{
             position: "absolute", bottom: -6, right: -6,
-            background: "linear-gradient(135deg, var(--accent), var(--accent-dark))",
+            background: "var(--bg-invert)",
             borderRadius: "50%", width: 24, height: 24,
             display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: "0 0 10px var(--accent-glow)",
           }}>
-            <Swords style={{ width: 12, height: 12, color: "#fff" }} />
+            <Swords style={{ width: 12, height: 12, color: "var(--text-invert)" }} />
           </span>
         </div>
         <div>
@@ -96,7 +95,7 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
       {/* Stats grid */}
       <div className="stagger-children" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
         {statCards.map((sc) => (
-          <div key={sc.label} className="neu-card animate-fade-in-up" style={{ padding: "22px 18px", textAlign: "center" }}>
+          <div key={sc.label} className="neu-card" style={{ padding: "22px 18px", textAlign: "center" }}>
             <div className="neu-label" style={{ marginBottom: 8 }}>{sc.label}</div>
             <div className="font-mono" style={{ fontSize: "1.8rem", fontWeight: 800, color: sc.color }}>{sc.value}</div>
           </div>
@@ -104,10 +103,10 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
       </div>
 
       {/* Match history */}
-      <div className="neu-card animate-fade-in-up" style={{ padding: "28px 32px", animationDelay: "120ms" }}>
+      <div className="neu-card" style={{ padding: "28px 32px" }}>
         <h3 style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 800, fontSize: "0.9rem", color: "var(--text-primary)", marginBottom: 20 }}>
-          <span className="neu-icon" style={{ width: 32, height: 32, background: "linear-gradient(135deg, var(--accent), var(--accent-dark))" }}>
-            <Swords style={{ width: 14, height: 14, color: "#fff" }} />
+          <span className="neu-icon" style={{ width: 32, height: 32, background: "var(--bg-invert)", border: "none" }}>
+            <Swords style={{ width: 14, height: 14, color: "var(--text-invert)" }} />
           </span>
           Recent Match History
         </h3>
@@ -136,9 +135,8 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
                         display: "inline-flex", alignItems: "center", gap: 6,
                         padding: "4px 12px", borderRadius: "var(--r-pill)",
                         fontSize: "0.72rem", fontWeight: 700,
-                        background: match.result === "WIN" ? "var(--success)" : match.result === "LOSS" ? "var(--danger)" : "var(--text-muted)",
-                        color: "#fff",
-                        boxShadow: match.result === "WIN" ? "0 0 10px rgba(34,197,94,0.35)" : match.result === "LOSS" ? "0 0 10px rgba(239,68,68,0.3)" : "none",
+                        background: match.result === "WIN" ? "var(--success)" : match.result === "LOSS" ? "var(--danger)" : "var(--bg-subtle)",
+                        color: match.result === "WIN" || match.result === "LOSS" ? "#fff" : "var(--text-primary)",
                       }}>
                         {match.result === "WIN" ? <CheckCircle2 style={{ width: 11, height: 11 }} /> : match.result === "LOSS" ? <XCircle style={{ width: 11, height: 11 }} /> : <MinusCircle style={{ width: 11, height: 11 }} />}
                         {match.result}
