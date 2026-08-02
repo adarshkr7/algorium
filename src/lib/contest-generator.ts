@@ -1,0 +1,205 @@
+import {
+  fetchCFProblemSet,
+  fetchCFUserSolvedKeys,
+  CFProblem,
+} from "./codeforces";
+
+export interface GenerateContestOptions {
+  name: string;
+  mode: "BLITZ" | "CLASSIC";
+  problemCount: number;
+  durationMinutes: number;
+  minRating: number;
+  maxRating: number;
+  allowedTags: string[];
+  excludedTags: string[];
+  seed?: string;
+  hostHandle: string;
+  guestHandle?: string;
+  preferOldProblems?: boolean;
+}
+
+export interface GeneratedProblem {
+  problemKey: string; // e.g. "1800-A"
+  name: string;
+  rating: number;
+  tags: string[];
+  indexInContest: number;
+}
+
+/**
+ * Seeded PRNG for reproducible problem selection when a seed is supplied.
+ */
+function seededRandom(seedStr: string) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seedStr.length; i++) {
+    h = Math.imul(h ^ seedStr.charCodeAt(i), 16777619);
+  }
+  return function () {
+    h += h << 13;
+    h ^= h >>> 7;
+    h += h << 3;
+    h ^= h >>> 17;
+    return (h += h << 5) >>> 0 / 4294967296;
+  };
+}
+
+/**
+ * Generates a unique 6-character room code consisting of uppercase letters and digits.
+ */
+export function generateRoomCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+/**
+ * Selects problems for a contest based on parameters and player submission histories.
+ * Enforces:
+ * - Only official Codeforces problems (contestId < 10000)
+ * - Prefers OLDER problems (contestId <= 1500 or sorting by contestId ascending/classic)
+ * - Strict verification that NEITHER player has solved the problem before (verdict === OK)
+ */
+export function filterAndSelectProblems(
+  allProblems: CFProblem[],
+  solvedKeysHost: Set<string>,
+  solvedKeysGuest: Set<string>,
+  options: GenerateContestOptions
+): GeneratedProblem[] {
+  const {
+    problemCount,
+    minRating,
+    maxRating,
+    allowedTags,
+    excludedTags,
+    seed,
+  } = options;
+
+  const seenKeys = new Set<string>();
+  const validCandidates: CFProblem[] = [];
+
+  for (const prob of allProblems) {
+    if (!prob.contestId || !prob.index || !prob.name) continue;
+
+    // 1. Ignore Gym problems (Codeforces official contests have contestId < 10000)
+    if (prob.contestId >= 10000) continue;
+
+    const formattedIndex = String(prob.index).trim().toUpperCase();
+    const key = `${prob.contestId}-${formattedIndex}`;
+
+    // 2. Ignore duplicate problems
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+
+    // 3. Ignore interactive/special problems
+    const tags = prob.tags || [];
+    if (
+      tags.includes("*special") ||
+      tags.includes("interactive") ||
+      prob.name.toLowerCase().includes("interactive")
+    ) {
+      continue;
+    }
+
+    // 4. Rating range check
+    const rating = prob.rating || 1200;
+    if (rating < minRating || rating > maxRating) continue;
+
+    // 5. Excluded tags check
+    if (excludedTags.length > 0) {
+      const hasExcluded = excludedTags.some((exTag) => tags.includes(exTag));
+      if (hasExcluded) continue;
+    }
+
+    // 6. Allowed tags check
+    if (allowedTags.length > 0) {
+      const hasAllowed = allowedTags.some((alTag) => tags.includes(alTag));
+      if (!hasAllowed) continue;
+    }
+
+    // 7. VERIFICATION: Neither player has solved this problem before!
+    if (solvedKeysHost.has(key) || solvedKeysGuest.has(key)) {
+      continue;
+    }
+
+    validCandidates.push(prob);
+  }
+
+  // PREFER OLD PROBLEMS: Filter/Sort candidates to favor older classic Codeforces contests (e.g. contestId <= 1500)
+  const oldCandidates = validCandidates.filter((p) => p.contestId <= 1500);
+  const poolToUse = oldCandidates.length >= problemCount ? oldCandidates : validCandidates;
+
+  // Shuffle pool using seed if provided, or Math.random
+  const randomFn = seed ? seededRandom(seed) : Math.random;
+  const shuffled = [...poolToUse].sort(() => randomFn() - 0.5);
+
+  // Pick required count, sorting by difficulty/rating ascending
+  const selected = shuffled.slice(0, problemCount);
+  selected.sort((a, b) => (a.rating || 0) - (b.rating || 0));
+
+  return selected.map((prob, idx) => ({
+    problemKey: `${prob.contestId}-${String(prob.index).trim().toUpperCase()}`,
+    name: prob.name,
+    rating: prob.rating || 1200,
+    tags: prob.tags || [],
+    indexInContest: idx,
+  }));
+}
+
+/**
+ * Main helper to fetch data and generate contest problems.
+ */
+export async function generateContest(
+  options: GenerateContestOptions
+): Promise<GeneratedProblem[]> {
+  const [allProblems, hostSolved, guestSolved] = await Promise.all([
+    fetchCFProblemSet(),
+    fetchCFUserSolvedKeys(options.hostHandle),
+    options.guestHandle ? fetchCFUserSolvedKeys(options.guestHandle) : Promise.resolve(new Set<string>()),
+  ]);
+
+  let problems = filterAndSelectProblems(allProblems, hostSolved, guestSolved, options);
+
+  // Fallback if tag constraints were too restrictive
+  if (problems.length < options.problemCount) {
+    console.warn("Fewer problems found than requested; relaxing tag constraints.");
+    const fallbackOptions = { ...options, allowedTags: [], excludedTags: [] };
+    problems = filterAndSelectProblems(allProblems, hostSolved, guestSolved, fallbackOptions);
+  }
+
+  return problems.slice(0, options.problemCount);
+}
+
+/**
+ * Re-verifies problems when guest joins. If any problem was already solved by host or guest,
+ * replaces it with a fresh unsolved problem.
+ */
+export async function verifyAndReplaceSolvedProblems(
+  existingProblems: GeneratedProblem[],
+  hostHandle: string,
+  guestHandle: string,
+  options: GenerateContestOptions
+): Promise<GeneratedProblem[]> {
+  const [hostSolved, guestSolved] = await Promise.all([
+    fetchCFUserSolvedKeys(hostHandle),
+    fetchCFUserSolvedKeys(guestHandle),
+  ]);
+
+  const hasSolvedProblem = existingProblems.some(
+    (p) => hostSolved.has(p.problemKey) || guestSolved.has(p.problemKey)
+  );
+
+  if (!hasSolvedProblem) {
+    return existingProblems;
+  }
+
+  // Regenerate clean problem set using both solved histories
+  return generateContest({
+    ...options,
+    hostHandle,
+    guestHandle,
+  });
+}

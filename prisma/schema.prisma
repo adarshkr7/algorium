@@ -1,0 +1,134 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id           String         @id @default(uuid())
+  handle       String         @unique
+  avatar       String
+  rating       Int            @default(0)
+  maxRating    Int            @default(0)
+  rank         String         @default("unrated")
+  maxRank      String         @default("unrated")
+  wins              Int            @default(0)
+  losses            Int            @default(0)
+  draws             Int            @default(0)
+  createdAt         DateTime       @default(now())
+  verificationToken String?
+  tokenExpiresAt    DateTime?
+
+  hostedRooms  Room[]         @relation("HostedRooms")
+  guestRooms   Room[]         @relation("GuestRooms")
+  player1Rooms Room[]         @relation("Player1Rooms")
+  player2Rooms Room[]         @relation("Player2Rooms")
+  participants Participant[]
+  submissions  Submission[]
+  matchHistories MatchHistory[]
+}
+
+model Room {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  hostId      String
+  guestId     String?
+  hostingType String   @default("PLAYER_HOST") // "PLAYER_HOST" (Host vs Guest) or "SUPERVISED" (Host spectates 2 players)
+  player1Id   String?
+  player2Id   String?
+  status      String   @default("WAITING") // WAITING, IN_PROGRESS, FINISHED
+  createdAt   DateTime @default(now())
+
+  host        User     @relation("HostedRooms", fields: [hostId], references: [id])
+  guest       User?    @relation("GuestRooms", fields: [guestId], references: [id])
+  player1     User?    @relation("Player1Rooms", fields: [player1Id], references: [id])
+  player2     User?    @relation("Player2Rooms", fields: [player2Id], references: [id])
+  contest     Contest?
+}
+
+model Contest {
+  id              String         @id @default(uuid())
+  roomId          String         @unique
+  name            String
+  mode            String         // BLITZ, CLASSIC
+  problemCount    Int            @default(3)
+  durationMinutes Int            @default(30)
+  minRating       Int            @default(800)
+  maxRating       Int            @default(1600)
+  allowedTags     String         // JSON array of strings
+  excludedTags    String         // JSON array of strings
+  seed            String
+  startTime       DateTime?
+  endTime         DateTime?
+  status          String         @default("NOT_STARTED") // NOT_STARTED, IN_PROGRESS, FINISHED
+
+  room            Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  problems        Problem[]
+  participants    Participant[]
+  submissions     Submission[]
+}
+
+model Problem {
+  id             String       @id @default(uuid())
+  contestId      String
+  problemKey     String       // e.g., "1800-A"
+  name           String
+  rating         Int
+  tags           String       // JSON array of strings
+  indexInContest Int
+  lockedWinnerId String?      // For Blitz mode: handle or user id who locked it
+
+  contest        Contest      @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  submissions    Submission[]
+}
+
+model Participant {
+  id            String   @id @default(uuid())
+  contestId     String
+  userId        String
+  role          String   // HOST, GUEST
+  score         Int      @default(0)
+  penalty       Int      @default(0)
+  acceptedCount Int      @default(0)
+  isWinner      Boolean  @default(false)
+
+  contest       Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id])
+}
+
+model Submission {
+  id              String   @id @default(uuid())
+  contestId       String
+  problemId       String
+  userId          String
+  cfSubmissionId  BigInt
+  verdict         String   // OK, WRONG_ANSWER, TIME_LIMIT_EXCEEDED, etc.
+  passedTestCount Int      @default(0)
+  timeSubmitted   DateTime
+  solveTimeSeconds Int?    // Seconds from contest start if OK
+
+  contest         Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problem         Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id])
+}
+
+model MatchHistory {
+  id             String   @id @default(uuid())
+  userId         String
+  roomCode       String
+  opponentHandle String
+  mode           String   // BLITZ, CLASSIC
+  result         String   // WIN, LOSS, DRAW
+  userScore      Int
+  opponentScore  Int
+  duration       Int      // in seconds
+  playedAt       DateTime @default(now())
+
+  user           User     @relation(fields: [userId], references: [id])
+}
