@@ -494,7 +494,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         <div style={{
           position: "fixed", inset: 0, zIndex: 100,
           display: "flex", alignItems: "center", justifyContent: "center",
-          background: "rgba(233,238,245,0.85)", backdropFilter: "blur(8px)", padding: 20,
+          background: "var(--modal-backdrop)", backdropFilter: "blur(8px)", padding: 20,
         }} className="animate-fade-in">
           <div className="neu-card-lg animate-scale-in" style={{ width: "100%", maxWidth: 520, padding: "36px 40px", textAlign: "center", display: "flex", flexDirection: "column", gap: 20 }}>
             <span className="neu-icon" style={{ width: 64, height: 64, background: "linear-gradient(135deg, var(--warning), #d97706)", margin: "0 auto", boxShadow: "0 0 20px rgba(245,158,11,0.4)" }}>

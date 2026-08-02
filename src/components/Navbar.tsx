@@ -5,13 +5,16 @@ import Link from "next/link";
 import {
   Swords, User as UserIcon, LogOut, Zap, Trophy,
   ShieldAlert, Copy, CheckCircle, ExternalLink, RefreshCw,
+  Sun, Moon,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
+import { useTheme } from "@/context/ThemeContext";
 
 type LoginStep = "handle" | "verify";
 
 export const Navbar: React.FC = () => {
   const { user, setUser, logout } = useUser();
+  const { theme, toggleTheme } = useTheme();
   const [handleInput, setHandleInput] = useState("");
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [step, setStep] = useState<LoginStep>("handle");
@@ -100,6 +103,21 @@ export const Navbar: React.FC = () => {
           )}
         </nav>
 
+        {/* Right side: theme toggle + auth */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {/* Theme Toggle */}
+          <button
+            onClick={toggleTheme}
+            className="neu-btn"
+            style={{ padding: "10px", borderRadius: "50%" }}
+            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          >
+            {theme === "dark"
+              ? <Sun style={{ width: 16, height: 16, color: "var(--warning)" }} />
+              : <Moon style={{ width: 16, height: 16, color: "var(--accent)" }} />
+            }
+          </button>
+
         {/* Auth */}
         <div>
           {user ? (
@@ -130,6 +148,7 @@ export const Navbar: React.FC = () => {
             </button>
           )}
         </div>
+        </div>
       </header>
 
       {/* ── Login Modal ── */}
@@ -139,7 +158,7 @@ export const Navbar: React.FC = () => {
           style={{
             position: "fixed", inset: 0, zIndex: 100,
             display: "flex", alignItems: "center", justifyContent: "center",
-            background: "rgba(233,238,245,0.85)",
+            background: "var(--modal-backdrop)",
             backdropFilter: "blur(8px)",
             padding: "20px",
           }}

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { UserProvider } from "@/context/UserContext";
+import { ThemeProvider } from "@/context/ThemeContext";
 import { Navbar } from "@/components/Navbar";
 
 export const metadata: Metadata = {
@@ -15,7 +16,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         style={{
           backgroundColor: "var(--neu-bg)",
@@ -25,20 +26,22 @@ export default function RootLayout({
           flexDirection: "column",
         }}
       >
-        <UserProvider>
-          <Navbar />
-          <main
-            style={{
-              flex: 1,
-              maxWidth: "1200px",
-              width: "100%",
-              margin: "0 auto",
-              padding: "32px 20px 60px",
-            }}
-          >
-            {children}
-          </main>
-        </UserProvider>
+        <ThemeProvider>
+          <UserProvider>
+            <Navbar />
+            <main
+              style={{
+                flex: 1,
+                maxWidth: "1200px",
+                width: "100%",
+                margin: "0 auto",
+                padding: "32px 20px 60px",
+              }}
+            >
+              {children}
+            </main>
+          </UserProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

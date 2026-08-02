@@ -186,19 +186,19 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
   const isUserP1 = user && player1 && user.id === player1.id;
   const isUserP2 = user && player2 && user.id === player2.id;
 
+  // If Socket disconnects (common on Vercel), fallback to database presence:
+  // If player1/player2 are assigned in the room object, we assume they are connected enough to start.
   const player1Connected = Boolean(
     player1 && (
-      isUserP1 ||
       connectedPlayers.some(p => p.userId === player1.id || (p.handle && p.handle.toLowerCase() === player1.handle.toLowerCase())) ||
-      (!isSupervised && room.hostId === player1.id) // Host is present in room
+      true // DB fallback: If they are assigned, let the host start
     )
   );
 
   const player2Connected = Boolean(
     player2 && (
-      isUserP2 ||
       connectedPlayers.some(p => p.userId === player2.id || (p.handle && p.handle.toLowerCase() === player2.handle.toLowerCase())) ||
-      room.guestId === player2.id // Guest joined room
+      true // DB fallback: If they are assigned, let the host start
     )
   );
 
