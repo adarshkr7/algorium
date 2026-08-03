@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { UserProvider } from "@/context/UserContext";
-import { ThemeProvider } from "@/context/ThemeContext";
-import { Navbar } from "@/components/Navbar";
+import { Providers } from "@/app/providers";
 
 export const metadata: Metadata = {
   title: "Algorium — Real-time 1v1 Competitive Programming Platform",
@@ -28,22 +26,7 @@ export default function RootLayout({
       >
         <div className="bg-ambient-glow" />
         <div className="bg-grid" />
-        <ThemeProvider>
-          <UserProvider>
-            <Navbar />
-            <main
-              style={{
-                flex: 1,
-                maxWidth: "1200px",
-                width: "100%",
-                margin: "0 auto",
-                padding: "32px 20px 60px",
-              }}
-            >
-              {children}
-            </main>
-          </UserProvider>
-        </ThemeProvider>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
