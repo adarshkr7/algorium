@@ -199,9 +199,10 @@ export const Navbar: React.FC = () => {
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
         }}>
         {/* Logo */}
-        <Link href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0 }}>
-          <span style={{ fontWeight: 800, fontSize: "1.25rem", color: "var(--accent)", letterSpacing: "-0.02em" }}>
-            ALGO<span style={{ color: "var(--text-secondary)" }}>RIUM</span>
+        <Link href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0, gap: 10 }}>
+          <img src="/logo.png" alt="Algorium Logo" style={{ height: "32px", width: "32px", borderRadius: "50%", objectFit: "cover" }} />
+          <span style={{ fontWeight: 800, fontSize: "1.25rem", color: "#FFFFFF", letterSpacing: "-0.02em" }}>
+            ALGO<span style={{ color: "#888888" }}>RIUM</span>
           </span>
         </Link>
 
