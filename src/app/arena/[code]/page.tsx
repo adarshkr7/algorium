@@ -6,7 +6,7 @@ import Link from "next/link";
 import confetti from "canvas-confetti";
 import {
   Swords, Clock, Zap, Shield, ExternalLink, CheckCircle2, Lock,
-  Trophy, AlertCircle, Activity, LogOut, Eye,
+  Trophy, AlertCircle, Activity, LogOut, Eye, ArrowLeft, Medal,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import { createClient } from "@/utils/supabase/client";
@@ -246,6 +246,13 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
+  const formatSolveTime = (seconds: number | null) => {
+    if (!seconds) return "—";
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `+${m}m${s > 0 ? `${s}s` : ""}`;
+  };
+
   if (!room || !contest) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60vh", gap: 16 }}>
@@ -260,7 +267,236 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
   const isSupervised = room.hostingType === "SUPERVISED";
   const player1 = isSupervised ? room.player1 : room.host;
   const player2 = isSupervised ? room.player2 : room.guest;
-  const isSupervisor = user && user.id === room.hostId && isSupervised;
+
+  // ── Finished Contest Results View ──
+  // Shown when navigating to a completed contest (e.g. from match history)
+  if (contest.status === "FINISHED" && isFinished) {
+    const submissions: any[] = recentActions
+      .filter((a) => a.type === "SUBMISSION")
+      .map((a) => a.action)
+      .sort((a, b) => new Date(a.timeSubmitted).getTime() - new Date(b.timeSubmitted).getTime());
+
+    // Build per-player stats
+    function getPlayerStats(playerId: string | null) {
+      if (!playerId) return { accepted: 0, penalty: 0, locked: 0 };
+      let accepted = 0, penalty = 0, locked = 0;
+      for (const prob of problems) {
+        const probSubs = submissions
+          .filter((s) => s.userId === playerId && s.problemId === prob.id)
+          .sort((a, b) => new Date(a.timeSubmitted).getTime() - new Date(b.timeSubmitted).getTime());
+        const ac = probSubs.find((s) => s.verdict === "OK");
+        if (ac) {
+          accepted++;
+          const wrongBefore = probSubs.filter(
+            (s) => new Date(s.timeSubmitted) < new Date(ac.timeSubmitted) && s.verdict !== "OK"
+          ).length;
+          penalty += Math.floor((ac.solveTimeSeconds || 0) / 60) + wrongBefore * 20;
+        }
+        if (contest.mode === "BLITZ" && prob.lockedWinnerId === playerId) locked++;
+      }
+      return { accepted, penalty, locked };
+    }
+
+    const p1Stats = getPlayerStats(player1?.id);
+    const p2Stats = getPlayerStats(player2?.id);
+
+    let winnerId: string | null = null;
+    if (contest.mode === "BLITZ") {
+      if (p1Stats.locked > p2Stats.locked) winnerId = player1?.id;
+      else if (p2Stats.locked > p1Stats.locked) winnerId = player2?.id;
+    } else {
+      if (p1Stats.accepted > p2Stats.accepted) winnerId = player1?.id;
+      else if (p2Stats.accepted > p1Stats.accepted) winnerId = player2?.id;
+      else if (p1Stats.penalty < p2Stats.penalty) winnerId = player1?.id;
+      else if (p2Stats.penalty < p1Stats.penalty) winnerId = player2?.id;
+    }
+    const isDraw = winnerId === null;
+    const winnerHandle = winnerId === player1?.id ? player1?.handle : winnerId === player2?.id ? player2?.handle : null;
+
+    return (
+      <div className="stagger-children" style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+
+        {/* Header */}
+        <div className="neu-card-lg" style={{ padding: "24px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <span className="neu-icon" style={{ width: 48, height: 48, background: "linear-gradient(135deg, var(--warning), #d97706)", border: "none", boxShadow: "0 0 16px rgba(245,158,11,0.3)" }}>
+              <Trophy style={{ width: 22, height: 22, color: "#fff" }} />
+            </span>
+            <div>
+              <h1 style={{ fontWeight: 800, fontSize: "1.4rem", color: "var(--text-primary)", margin: 0 }}>{contest.name}</h1>
+              <p className="font-mono" style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "2px 0 0" }}>
+                Room {code} · {contest.mode} · {contest.durationMinutes}min
+              </p>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className="neu-chip" style={{ background: "var(--danger)", color: "#fff" }}>FINISHED</span>
+            <Link href="/" className="neu-btn" style={{ padding: "8px 16px", fontSize: "0.8rem", gap: 6 }}>
+              <ArrowLeft style={{ width: 14, height: 14 }} /> Home
+            </Link>
+          </div>
+        </div>
+
+        {/* Winner banner */}
+        <div className="neu-card" style={{
+          padding: "20px 28px",
+          background: isDraw ? "var(--bg-subtle)" : "linear-gradient(135deg, rgba(245,158,11,0.08), rgba(245,158,11,0.02))",
+          border: `1px solid ${isDraw ? "var(--border)" : "rgba(245,158,11,0.3)"}`,
+          textAlign: "center",
+        }}>
+          <div style={{ fontSize: "2rem", marginBottom: 6 }}>{isDraw ? "🤝" : "🏆"}</div>
+          <div style={{ fontWeight: 800, fontSize: "1.3rem", color: isDraw ? "var(--text-primary)" : "var(--warning)" }}>
+            {isDraw ? "It's a Draw!" : `${winnerHandle} Wins!`}
+          </div>
+        </div>
+
+        {/* Leaderboard */}
+        <div className="neu-card" style={{ padding: "24px 28px" }}>
+          <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: "0.88rem", color: "var(--text-primary)", marginBottom: 16, textTransform: "uppercase" }}>
+            <Medal style={{ width: 16, height: 16, color: "var(--warning)" }} /> Leaderboard
+          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {[{ player: player1, stats: p1Stats, label: "Player 1" }, { player: player2, stats: p2Stats, label: "Player 2" }]
+              .sort((a, b) => {
+                if (contest.mode === "BLITZ") return b.stats.locked - a.stats.locked;
+                if (b.stats.accepted !== a.stats.accepted) return b.stats.accepted - a.stats.accepted;
+                return a.stats.penalty - b.stats.penalty;
+              })
+              .map(({ player, stats, label }, rank) => (
+                <div key={player?.id || label} className="neu-inset" style={{
+                  padding: "16px 20px",
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                  border: player?.id === winnerId ? "1px solid var(--warning)" : "1px solid var(--border)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: "1.2rem" }}>{rank === 0 ? "🥇" : "🥈"}</span>
+                    <img src={player?.avatar || DEFAULT_AVATAR} alt={player?.handle} style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }} />
+                    <div>
+                      <div style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "0.95rem" }}>{player?.handle || label}</div>
+                      <div className="neu-label" style={{ fontSize: "0.68rem" }}>{label}</div>
+                    </div>
+                  </div>
+                  <div className="font-mono" style={{ textAlign: "right" }}>
+                    <div style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--success)" }}>
+                      {contest.mode === "BLITZ" ? `${stats.locked} Locked` : `${stats.accepted} Solved`}
+                    </div>
+                    {contest.mode === "CLASSIC" && (
+                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>+{stats.penalty}m penalty</div>
+                    )}
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+
+        {/* Problems — who solved each and when */}
+        <div className="neu-card" style={{ padding: "24px 28px" }}>
+          <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: "0.88rem", color: "var(--text-primary)", marginBottom: 16, textTransform: "uppercase" }}>
+            <Swords style={{ width: 16, height: 16, color: "var(--accent)" }} /> Problems
+          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {problems.map((prob: any, idx: number) => {
+              const p1AC = submissions.find((s) => s.problemId === prob.id && s.userId === player1?.id && s.verdict === "OK");
+              const p2AC = submissions.find((s) => s.problemId === prob.id && s.userId === player2?.id && s.verdict === "OK");
+              const isLocked = contest.mode === "BLITZ" && prob.lockedWinnerId != null;
+              const lockerHandle = prob.lockedWinnerId === player1?.id ? player1?.handle : prob.lockedWinnerId === player2?.id ? player2?.handle : null;
+              return (
+                <div key={prob.id} className="neu-inset" style={{ padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span className="font-mono" style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--accent)", width: 20 }}>{String.fromCharCode(65 + idx)}</span>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: "0.88rem", color: "var(--text-primary)" }}>{prob.name}</div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
+                        <span className="neu-chip font-mono" style={{ fontSize: "0.65rem", color: "var(--warning)", background: "var(--warning-soft)" }}>Rating: {prob.rating}</span>
+                        <span className="neu-chip font-mono" style={{ fontSize: "0.65rem" }}>{prob.problemKey}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    {isLocked && (
+                      <span className="neu-chip font-mono" style={{ background: "var(--danger-soft)", color: "var(--danger)", fontSize: "0.68rem" }}>
+                        <Lock style={{ width: 10, height: 10 }} /> Locked by {lockerHandle}
+                      </span>
+                    )}
+                    {p1AC && (
+                      <span className="neu-chip font-mono" style={{ background: "rgba(16,185,129,0.1)", color: "var(--success)", fontSize: "0.68rem" }}>
+                        <CheckCircle2 style={{ width: 10, height: 10 }} /> {player1?.handle} {formatSolveTime(p1AC.solveTimeSeconds)}
+                      </span>
+                    )}
+                    {p2AC && (
+                      <span className="neu-chip font-mono" style={{ background: "rgba(16,185,129,0.1)", color: "var(--success)", fontSize: "0.68rem" }}>
+                        <CheckCircle2 style={{ width: 10, height: 10 }} /> {player2?.handle} {formatSolveTime(p2AC.solveTimeSeconds)}
+                      </span>
+                    )}
+                    {!p1AC && !p2AC && (
+                      <span className="neu-chip font-mono" style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Unsolved</span>
+                    )}
+                    <a href={`https://codeforces.com/problemset/problem/${prob.problemKey?.replace("-", "/")}`} target="_blank" rel="noreferrer"
+                      className="neu-btn" style={{ padding: "4px 10px", fontSize: "0.68rem", height: 28, gap: 4 }}>
+                      <ExternalLink style={{ width: 10, height: 10 }} /> CF
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Submission log */}
+        <div className="neu-card" style={{ padding: "24px 28px" }}>
+          <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: "0.88rem", color: "var(--text-primary)", marginBottom: 16, textTransform: "uppercase" }}>
+            <Activity style={{ width: 16, height: 16, color: "var(--accent)" }} /> Submission Log
+          </h2>
+          {submissions.length === 0 ? (
+            <div className="neu-inset" style={{ padding: "32px", textAlign: "center" }}>
+              <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.82rem", margin: 0 }}>No submissions recorded.</p>
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 6px" }}>
+                <thead>
+                  <tr>
+                    {["Time", "Player", "Problem", "Verdict", "Solve Time"].map((h) => (
+                      <th key={h} className="neu-label" style={{ textAlign: "left", padding: "0 12px 8px", fontWeight: 700, fontSize: "0.72rem" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {submissions.map((sub: any, i: number) => (
+                    <tr key={sub.id || i}>
+                      <td className="font-mono" style={{ padding: "8px 12px", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                        {formatActionTime(sub.timeSubmitted)}
+                      </td>
+                      <td style={{ padding: "8px 12px", fontWeight: 600, fontSize: "0.82rem", color: "var(--text-primary)" }}>
+                        {sub.user?.handle || "—"}
+                      </td>
+                      <td className="font-mono" style={{ padding: "8px 12px", fontSize: "0.78rem", color: "var(--text-secondary)" }}>
+                        {sub.problem?.name || "—"}
+                      </td>
+                      <td style={{ padding: "8px 12px" }}>
+                        <span className="neu-chip font-mono" style={{
+                          fontSize: "0.65rem",
+                          background: sub.verdict === "OK" ? "var(--success)" : sub.verdict === "TESTING" ? "var(--warning)" : "var(--danger)",
+                          color: "#fff", border: "none",
+                        }}>
+                          {sub.verdict === "OK" ? "AC" : sub.verdict?.replace(/_/g, " ")}
+                        </span>
+                      </td>
+                      <td className="font-mono" style={{ padding: "8px 12px", fontSize: "0.72rem", color: sub.verdict === "OK" ? "var(--success)" : "var(--text-muted)" }}>
+                        {sub.verdict === "OK" ? formatSolveTime(sub.solveTimeSeconds) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+      </div>
+    );
+  }
 
   const selectedProblem = problems[selectedProblemIndex] || problems[0];
 

@@ -41,7 +41,14 @@ export async function GET(
       return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ room });
+    // Serialize BigInt fields (cfSubmissionId) before JSON response
+    const serialized = JSON.parse(
+      JSON.stringify(room, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value
+      )
+    );
+
+    return NextResponse.json({ room: serialized });
   } catch (error) {
     console.error("Get room API error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
