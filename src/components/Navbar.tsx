@@ -67,8 +67,9 @@ export const Navbar: React.FC = () => {
     if (!q) return;
     router.push(`/profile/${encodeURIComponent(q)}`);
     setSearchQuery("");
-    setSearchFocused(false);
+    setSearchExpanded(false);
   };
+
 
   const resetModal = () => {
     setStep("handle"); setHandleInput(""); setPasswordInput(""); setEmailInput("");
