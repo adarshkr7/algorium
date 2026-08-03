@@ -208,6 +208,44 @@ body {
   box-shadow: 0 0 0 2px var(--bg-main), 0 0 0 4px var(--border);
 }
 
+.neu-input-minimal {
+  width: 100%;
+  padding: 10px 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-weight: 400;
+  border: none;
+  border-bottom: 2px solid var(--border);
+  outline: none;
+  transition: border-color var(--t-base);
+}
+.neu-input-minimal::placeholder { color: var(--text-muted); }
+.neu-input-minimal:focus {
+  border-color: var(--text-primary);
+}
+
+.minimal-link-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color var(--t-fast);
+}
+.minimal-link-group:hover {
+  color: var(--text-primary);
+}
+.minimal-link-group .arrow-icon {
+  transition: transform var(--t-fast);
+}
+.minimal-link-group:hover .arrow-icon {
+  transform: translateX(4px);
+}
+
+
 .neu-select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23A1A1AA' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");

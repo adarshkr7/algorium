@@ -67,6 +67,12 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
                 router.push(`/arena/${code}`);
                 return;
               }
+              if (channelRef.current) {
+                channelRef.current.send({
+                  type: "broadcast",
+                  event: "player-joined"
+                }).catch(() => {});
+              }
             }
           }
         }
@@ -83,6 +89,11 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
     }
 
     fetchRoomState();
+    
+    // Poll every 5 seconds to ensure we never miss a join if websockets drop
+    const pollInterval = setInterval(() => {
+      if (isMounted) fetchRoomState();
+    }, 5000);
 
     const trackingId = user ? user.id : 'guest-' + Math.random().toString(36).substring(7);
     
@@ -111,6 +122,9 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
       .on("broadcast", { event: "contest-started" }, () => {
         router.push(`/arena/${code}`);
       })
+      .on("broadcast", { event: "player-joined" }, () => {
+        if (isMounted) fetchRoomState();
+      })
       .subscribe(async (status: string) => {
         if (status === "SUBSCRIBED" && user) {
           await channel.track({
@@ -123,6 +137,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
 
     return () => {
       isMounted = false;
+      clearInterval(pollInterval);
       channelRef.current = null;
       if (channel) supabase.removeChannel(channel);
     };
@@ -222,151 +237,134 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
   const canStart = Boolean(isHost && player1 && player2 && player1Connected && player2Connected);
 
   const PlayerCard = ({ player, roleTitle, connected, isWaiting = false }: { player: any; roleTitle: string; connected: boolean; isWaiting?: boolean }) => (
-    <div className="neu-card" style={{ padding: "28px 24px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <span className="neu-chip" style={{
-          background: roleTitle.includes("HOST") ? "var(--bg-invert)" : "var(--bg-invert)",
-          color: "var(--text-invert)",
-          border: "none",
-        }}>
-          {roleTitle}
-        </span>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.72rem", fontWeight: 600, color: connected ? "var(--success)" : isWaiting ? "var(--warning)" : "var(--text-muted)", fontFamily: "JetBrains Mono, monospace" }}>
-          {connected
-            ? <><span className="status-dot-green" /> CONNECTED</>
-            : isWaiting
-            ? <><span className="status-dot-amber" /> WAITING TO JOIN</>
-            : <><WifiOff style={{ width: 12, height: 12 }} /> DISCONNECTED</>
-          }
-        </div>
-      </div>
+    <div style={{ display: "flex", alignItems: "center", gap: 24, padding: "24px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
       {player ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <img src={player.avatar || "https://codeforces.org/s/0/images/user-alt.png"} alt={player.handle} style={{ width: 60, height: 60, borderRadius: "var(--r-md)", objectFit: "cover", boxShadow: "var(--neu-shadow-sm)" }} />
-          <div>
-            <h3 style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--text-primary)", margin: "0 0 4px" }}>{player.handle}</h3>
-            <p className="font-mono" style={{ fontSize: "0.78rem", color: "var(--accent)", margin: "0 0 4px" }}>Rating: {player.rating} ({player.rank})</p>
-            <p className="font-mono" style={{ fontSize: "0.7rem", color: "var(--text-muted)", margin: 0 }}>W: {player.wins} | L: {player.losses} | D: {player.draws}</p>
+        <>
+          <img src={player.avatar || "https://codeforces.org/s/0/images/user-alt.png"} alt={player.handle} style={{ width: 64, height: 64, borderRadius: "100px", objectFit: "cover" }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+              <h3 style={{ fontWeight: 800, fontSize: "1.5rem", color: "#FFFFFF", margin: 0, lineHeight: 1 }}>{player.handle}</h3>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: connected ? "var(--success)" : "var(--danger)", boxShadow: `0 0 10px ${connected ? "var(--success)" : "var(--danger)"}` }} title={connected ? "Connected" : "Disconnected"} />
+            </div>
+            <div style={{ display: "flex", gap: 16, fontSize: "0.85rem", color: "var(--text-secondary)", fontWeight: 500, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+              <span>{roleTitle}</span>
+              <span>•</span>
+              <span>Rating: {player.rating}</span>
+            </div>
           </div>
-        </div>
+        </>
       ) : (
-        <div className="neu-inset" style={{ padding: "24px 20px", textAlign: "center", borderRadius: "var(--r-md)" }}>
-          <Users style={{ width: 28, height: 28, color: "var(--text-muted)", margin: "0 auto 10px" }} />
-          <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", fontWeight: 500, margin: 0 }}>
-            Share code <strong className="font-mono" style={{ color: "var(--accent)" }}>{code}</strong> to invite competitor
-          </p>
-        </div>
+        <>
+          <div style={{ width: 64, height: 64, borderRadius: "100px", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Users style={{ width: 28, height: 28, color: "var(--text-muted)" }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <h3 style={{ fontWeight: 800, fontSize: "1.5rem", color: "var(--text-muted)", margin: "0 0 8px", lineHeight: 1 }}>Waiting...</h3>
+            <div style={{ display: "flex", gap: 16, fontSize: "0.85rem", color: "var(--text-secondary)", fontWeight: 500, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+              <span>{roleTitle}</span>
+              <span>•</span>
+              <span style={{ color: "var(--warning)" }}>Pending Join</span>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
 
   return (
-    <div className="stagger-children" style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
-      <div className="neu-card-lg" style={{ padding: "32px 36px", display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-            <span className="neu-chip" style={{ background: isSupervised ? "var(--warning)" : "var(--accent)", color: "#fff" }}>
-              {isSupervised ? "SUPERVISED MATCH" : "1v1 DUEL MODE"}
-            </span>
-            <span style={{ color: "var(--text-muted)" }}>•</span>
-            <span className="font-mono" style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>{contest?.name}</span>
-          </div>
-          <h1 style={{ fontWeight: 800, fontSize: "1.7rem", color: "var(--text-primary)", margin: 0, letterSpacing: "-0.02em" }}>
-            {isSupervised ? "Supervising Contest Lobby" : "Waiting for Opponent"}
-          </h1>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div className="neu-inset" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", borderRadius: "var(--r-md)" }}>
-            <div>
-              <div className="neu-label" style={{ marginBottom: 2 }}>Room Code</div>
-              <div className="font-mono" style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--accent)", letterSpacing: "0.1em" }}>{code}</div>
+    <div style={{ position: "fixed", top: 64, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", overflow: "hidden", padding: "40px 20px" }}>
+      <div style={{ maxWidth: 900, width: "100%", margin: "0 auto", display: "flex", flexDirection: "column", height: "100%" }}>
+        
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 40, flexShrink: 0, flexWrap: "wrap", gap: 20 }}>
+          <div>
+            <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 12 }}>
+              {isSupervised ? "Supervised Match" : "1v1 Duel"} • {contest?.name}
             </div>
-            <button onClick={copyRoomCode} className="neu-btn" style={{ padding: "10px", borderRadius: "50%" }} title="Copy Room Code">
-              {copied ? <Check style={{ width: 16, height: 16, color: "var(--success)" }} /> : <Copy style={{ width: 16, height: 16 }} />}
+            <h1 style={{ fontWeight: 800, fontSize: "3.5rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.05em", lineHeight: 0.9 }}>
+              Room<br/>{code}.
+            </h1>
+          </div>
+          
+          <div style={{ display: "flex", gap: 12 }}>
+            <button onClick={copyRoomCode} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "100px", padding: "12px 24px", color: "#FFF", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+              {copied ? <Check style={{ width: 16, height: 16 }} /> : <Copy style={{ width: 16, height: 16 }} />}
+              {copied ? "COPIED" : "COPY CODE"}
+            </button>
+            <button onClick={handleLeaveRoom} style={{ background: "transparent", border: "1px solid rgba(255,70,70,0.3)", borderRadius: "100px", padding: "12px 24px", color: "var(--danger)", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+              <LogOut style={{ width: 16, height: 16 }} /> LEAVE
             </button>
           </div>
-          <button onClick={handleLeaveRoom} className="neu-btn-danger neu-btn" style={{ padding: "12px 18px", fontSize: "0.82rem" }}>
-            <LogOut style={{ width: 14, height: 14 }} /> Leave
-          </button>
         </div>
-      </div>
 
-      {isSupervised && (
-        <div className="neu-card" style={{ padding: "18px 24px", background: "var(--bg-subtle)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-primary)", fontSize: "0.85rem", fontWeight: 500 }}>
-            <Eye style={{ width: 18, height: 18, flexShrink: 0 }} />
-            <span>
-              {isHost
-                ? "👁️ You are Supervising this match. Share room code with two contestants to duel each other."
-                : `👁️ Match Supervised by ${room.host.handle}.`}
-            </span>
+        {/* Configuration Bar */}
+        <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: "16px", padding: "20px 24px", marginBottom: 40, display: "flex", gap: 32, flexShrink: 0, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Mode</span>
+            <span style={{ fontSize: "1.1rem", color: "#FFF", fontWeight: 700 }}>{contest.mode}</span>
           </div>
-        </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20 }}>
-        <PlayerCard
-          player={player1}
-          roleTitle={isSupervised ? "PLAYER 1" : "HOST (PLAYER 1)"}
-          connected={player1Connected}
-          isWaiting={!player1}
-        />
-        <PlayerCard
-          player={player2}
-          roleTitle={isSupervised ? "PLAYER 2" : "GUEST (PLAYER 2)"}
-          connected={player2Connected}
-          isWaiting={!player2}
-        />
-      </div>
-
-      <div className="neu-card" style={{ padding: "24px 28px" }}>
-        <h3 style={{ fontWeight: 800, fontSize: "0.82rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 16 }}>
-          Contest Configuration
-        </h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-          {[
-            { label: "Hosting Type", value: isSupervised ? "Supervised" : "Player Host", icon: isSupervised ? <Eye style={{ width: 14, height: 14, color: "var(--warning)" }} /> : <Swords style={{ width: 14, height: 14, color: "var(--accent)" }} /> },
-            { label: "Mode", value: contest.mode, icon: contest.mode === "BLITZ" ? <Zap style={{ width: 14, height: 14, color: "var(--success)" }} /> : <Shield style={{ width: 14, height: 14, color: "var(--accent)" }} /> },
-            { label: "Problems", value: `${contest.problemCount}`, icon: null },
-            { label: "Duration", value: `${contest.durationMinutes}m`, icon: null },
-          ].map((item) => (
-            <div key={item.label} className="neu-inset" style={{ padding: "14px 16px", borderRadius: "var(--r-md)" }}>
-              <div className="neu-label" style={{ marginBottom: 6 }}>{item.label}</div>
-              <div className="font-mono" style={{ fontWeight: 700, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 5, fontSize: "0.88rem" }}>
-                {item.icon}{item.value}
-              </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Problems</span>
+            <span style={{ fontSize: "1.1rem", color: "#FFF", fontWeight: 700 }}>{contest.problemCount}</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Duration</span>
+            <span style={{ fontSize: "1.1rem", color: "#FFF", fontWeight: 700 }}>{contest.durationMinutes} min</span>
+          </div>
+          {isSupervised && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Supervisor</span>
+              <span style={{ fontSize: "1.1rem", color: "#FFF", fontWeight: 700 }}>{room.host.handle}</span>
             </div>
-          ))}
+          )}
         </div>
-      </div>
 
-      <div>
-        {isHost ? (
-          <button
-            onClick={handleStartContest}
-            disabled={!canStart || starting}
-            className={canStart ? "neu-btn-primary neu-btn" : "neu-btn"}
-            style={{
-              width: "100%", padding: "18px 28px", fontSize: "1rem", borderRadius: "var(--r-md)",
-            }}
-          >
-            <Play style={{ width: 18, height: 18 }} />
-            {starting
-              ? "Starting Contest..."
-              : canStart
-              ? "START CONTEST NOW"
-              : (!player1 || !player2)
-              ? (isSupervised ? "Waiting for Both Contestants to Join..." : "Waiting for Guest Player...")
-              : "Waiting for Both Contestants to Connect..."}
-          </button>
-        ) : (
-          <div className="neu-inset" style={{ padding: "18px 24px", textAlign: "center", borderRadius: "var(--r-lg)" }}>
-            <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.85rem", margin: 0 }}>
-              Waiting for Host (<strong style={{ color: "var(--accent)" }}>{room.host.handle}</strong>) to start the duel...
-            </p>
-          </div>
-        )}
+        {/* Players Area */}
+        <div style={{ flex: 1, overflowY: "auto", paddingRight: 20 }}>
+          <PlayerCard
+            player={player1}
+            roleTitle={isSupervised ? "Player 1" : "Host"}
+            connected={player1Connected}
+            isWaiting={!player1}
+          />
+          <PlayerCard
+            player={player2}
+            roleTitle={isSupervised ? "Player 2" : "Guest"}
+            connected={player2Connected}
+            isWaiting={!player2}
+          />
+        </div>
+
+        {/* Action Button */}
+        <div style={{ marginTop: 24, paddingBottom: 24, flexShrink: 0 }}>
+          {isHost ? (
+            <button
+              onClick={handleStartContest}
+              disabled={!canStart || starting}
+              style={{ 
+                background: canStart ? "#FFFFFF" : "rgba(255,255,255,0.05)", 
+                color: canStart ? "#000000" : "rgba(255,255,255,0.3)", 
+                width: "100%", padding: "24px", 
+                fontSize: "1.2rem", fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase",
+                border: "none", cursor: (!canStart || starting) ? "not-allowed" : "pointer", 
+                transition: "all 0.2s"
+              }}
+            >
+              {starting
+                ? "STARTING CONTEST..."
+                : canStart
+                ? "START CONTEST NOW"
+                : (!player1 || !player2)
+                ? (isSupervised ? "WAITING FOR PLAYERS..." : "WAITING FOR GUEST...")
+                : "WAITING FOR CONNECTIONS..."}
+            </button>
+          ) : (
+            <div style={{ padding: "24px", textAlign: "center", background: "rgba(255,255,255,0.03)", color: "var(--text-secondary)", fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", fontSize: "0.9rem" }}>
+              WAITING FOR HOST TO START...
+            </div>
+          )}
+        </div>
+
       </div>
     </div>
   );

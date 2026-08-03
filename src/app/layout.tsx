@@ -3,7 +3,7 @@ import "./globals.css";
 import { Providers } from "@/app/providers";
 
 export const metadata: Metadata = {
-  title: "Algorium — Real-time 1v1 Competitive Programming Platform",
+  title: "Algorium - Real-time 1v1 Competitive Programming Platform",
   description:
     "Challenge competitive programmers in real-time 1v1 Blitz and Classic duels powered by the Codeforces API.",
 };

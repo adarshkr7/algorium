@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Swords, Zap, Shield, ArrowRight, CheckCircle2,
+  Code2, Braces, Terminal, FileCode2, Cpu
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 
@@ -22,157 +23,123 @@ export default function HomePage() {
   };
 
   return (
-    <div style={{ maxWidth: 1000, margin: "0 auto", display: "flex", flexDirection: "column", gap: 48 }}>
+    <div style={{ position: "fixed", top: 64, left: 0, right: 0, bottom: 0, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: "0 40px" }}>
+      
+      {/* ── Background Floating Icons ── */}
+      <div style={{ position: "absolute", inset: "-100px", overflow: "hidden", pointerEvents: "none", zIndex: -2 }}>
+        <Code2 style={{ position: "absolute", top: "10%", left: "5%", width: 140, height: 140, color: "#ffffff", opacity: 0.02, transform: "rotate(-15deg)" }} />
+        <Braces style={{ position: "absolute", bottom: "10%", left: "35%", width: 220, height: 220, color: "#ffffff", opacity: 0.015, transform: "rotate(10deg)" }} />
+        <Terminal style={{ position: "absolute", top: "15%", right: "8%", width: 160, height: 160, color: "#ffffff", opacity: 0.02, transform: "rotate(25deg)" }} />
+        <FileCode2 style={{ position: "absolute", bottom: "15%", right: "20%", width: 120, height: 120, color: "#ffffff", opacity: 0.02, transform: "rotate(-10deg)" }} />
+        <Cpu style={{ position: "absolute", top: "50%", left: "45%", width: 90, height: 90, color: "#ffffff", opacity: 0.02, transform: "rotate(5deg)" }} />
+      </div>
 
-      {/* ── Hero ── */}
-      <section className="animate-blur-reveal" style={{ textAlign: "center", paddingTop: 40, paddingBottom: 16 }}>
+      <div style={{ position: "relative", maxWidth: 1200, width: "100%", display: "flex", flexDirection: "row", alignItems: "center", gap: 80, justifyContent: "space-between", flexWrap: "wrap", zIndex: 1 }}>
+
+      {/* ── Left Side (Hero) ── */}
+      <section className="animate-blur-reveal" style={{ textAlign: "left", flex: "1 1 400px", maxWidth: 500 }}>
+        <div style={{
+          position: "absolute",
+          top: "30%",
+          left: "20%",
+          transform: "translate(-50%, -50%)",
+          width: "50vw",
+          height: "60vh",
+          background: "radial-gradient(circle, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 70%)",
+          pointerEvents: "none",
+          zIndex: -1
+        }} />
         <h1 style={{
-          fontSize: "clamp(2.4rem, 6vw, 4rem)",
+          fontSize: "clamp(3rem, 6vw, 5rem)",
           fontWeight: 800,
-          lineHeight: 1.1,
-          color: "var(--text-primary)",
-          marginBottom: 20,
-          letterSpacing: "-0.04em",
+          lineHeight: 1.05,
+          color: "#FFFFFF",
+          marginBottom: 24,
+          letterSpacing: "-0.05em",
         }}>
           Duel Programmers<br />
-          <span style={{ color: "var(--text-muted)" }}>in Real-Time</span>
+          <span style={{ color: "var(--text-muted)", fontWeight: 500, fontSize: "clamp(2.5rem, 4.5vw, 4rem)" }}>in Real-Time</span>
         </h1>
 
         <p style={{
-          fontSize: "1.05rem",
+          fontSize: "1.1rem",
           color: "var(--text-secondary)",
-          maxWidth: 560,
-          margin: "0 auto 36px",
-          lineHeight: 1.7,
+          maxWidth: 480,
+          marginBottom: 48,
+          lineHeight: 1.6,
         }}>
           Race through Blitz Mode or outsmart opponents in Classic Duel — powered by official Codeforces problems.
         </p>
 
         {/* Join / Create actions */}
-        <div style={{ maxWidth: 520, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
-          <form onSubmit={handleJoinRoom} style={{ display: "flex", gap: 10 }}>
-            <div style={{ flex: 1 }}>
-              <input
-                type="text"
-                placeholder="Room code (e.g. A9X2PQ)"
-                value={roomCode}
-                onChange={(e) => { setRoomCode(e.target.value.toUpperCase()); setError(null); }}
-                maxLength={6}
-                className="neu-input font-mono"
-                style={{ textAlign: "center", letterSpacing: "0.14em", fontSize: "1.1rem", padding: "14px 18px" }}
-              />
-            </div>
-            <button type="submit" className="neu-btn-primary neu-btn" style={{ padding: "14px 28px", flexShrink: 0, borderRadius: "var(--r-md)" }}>
-              <span>Join</span>
-              <ArrowRight style={{ width: 16, height: 16 }} />
+        <div style={{ maxWidth: 360, display: "flex", flexDirection: "column", gap: 32 }}>
+          <form onSubmit={handleJoinRoom} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <input
+              type="text"
+              placeholder="Enter Room Code..."
+              value={roomCode}
+              onChange={(e) => { setRoomCode(e.target.value.toUpperCase()); setError(null); }}
+              maxLength={6}
+              className="neu-input-minimal font-mono"
+              style={{ textAlign: "left", letterSpacing: "0.2em", fontSize: "1.2rem" }}
+            />
+            <button type="submit" className="neu-btn-primary neu-btn" style={{ padding: "14px", borderRadius: "var(--r-pill)", width: "100%", justifyContent: "center", fontSize: "0.95rem" }}>
+              <span>Join Duel</span>
             </button>
           </form>
 
           {error && (
-            <p className="animate-shake" style={{ fontSize: "0.8rem", color: "var(--danger)", fontWeight: 600 }}>{error}</p>
+            <p className="animate-shake" style={{ fontSize: "0.85rem", color: "var(--danger)", fontWeight: 600, marginTop: "-16px" }}>{error}</p>
           )}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, opacity: 0.5 }}>
             <hr className="neu-divider" style={{ flex: 1 }} />
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600 }}>OR</span>
+            <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, letterSpacing: "0.1em" }}>OR</span>
             <hr className="neu-divider" style={{ flex: 1 }} />
           </div>
 
-          <Link
-            href="/create"
-            className="neu-btn"
-            style={{ padding: "14px 28px", justifyContent: "center", borderRadius: "var(--r-md)", fontSize: "0.9rem" }}
-          >
-            <Swords style={{ width: 16, height: 16, color: "var(--accent)" }} />
-            <span style={{ fontWeight: 700 }}>Create New Contest Room</span>
-            <ArrowRight style={{ width: 15, height: 15, color: "var(--text-muted)" }} />
+          <Link href="/create" className="minimal-link-group" style={{ justifyContent: "center", fontSize: "1rem" }}>
+            <span>Host a new contest</span>
+            <ArrowRight className="arrow-icon" style={{ width: 16, height: 16 }} />
           </Link>
         </div>
       </section>
 
-
-
-      {/* ── Mode Cards ── */}
-      <section className="stagger-children" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 28 }}>
-
+      {/* ── Right Side (Mode Cards) ── */}
+      <section className="stagger-children" style={{ display: "flex", flexDirection: "column", gap: 64, flex: "1 1 400px", maxWidth: 440 }}>
+        
         {/* Blitz Mode */}
-        <div className="neu-card" style={{ padding: "36px 32px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
-            <span className="neu-icon" style={{ width: 40, height: 40 }}>
-              <Zap style={{ width: 20, height: 20, color: "var(--text-primary)" }} />
-            </span>
-            <div>
-              <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 2, letterSpacing: "0.05em" }}>MODE 1</div>
-              <h2 style={{ fontWeight: 700, fontSize: "1.25rem", color: "var(--text-primary)", margin: 0, letterSpacing: "-0.02em" }}>Blitz Mode</h2>
-            </div>
+        <div style={{ padding: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            <Zap style={{ width: 20, height: 20, color: "var(--text-muted)" }} />
+            <h2 style={{ fontWeight: 600, fontSize: "1.4rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.02em" }}>Blitz Mode</h2>
           </div>
-
-          <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: 24 }}>
-            High-speed linear race. Only Problem A is unlocked initially. Solved problems are permanently locked for your opponent!
+          <p style={{ fontSize: "0.95rem", color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 20, maxWidth: 360 }}>
+            High-speed linear race where solved problems are permanently locked for your opponent.
           </p>
-
-          <ul style={{ listStyle: "none", margin: "0 0 28px", padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
-            {[
-              "Instant permanent lock on Accepted verdict",
-              "Both players advance to next problem together",
-              "Winner determined by problems locked",
-            ].map((feat) => (
-              <li key={feat} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-                <CheckCircle2 style={{ width: 15, height: 15, color: "var(--success)", flexShrink: 0, marginTop: 1 }} />
-                {feat}
-              </li>
-            ))}
-          </ul>
-
-          <Link
-            href="/create?mode=BLITZ"
-            className="neu-btn"
-            style={{ fontSize: "0.82rem", padding: "10px 22px", display: "inline-flex" }}
-          >
-            <span>Host a Blitz Contest</span>
-            <ArrowRight style={{ width: 14, height: 14, color: "var(--success)" }} />
+          <Link href="/create?mode=BLITZ" className="minimal-link-group">
+            <span>Host Blitz</span>
+            <ArrowRight className="arrow-icon" style={{ width: 14, height: 14 }} />
           </Link>
         </div>
 
         {/* Classic Duel */}
-        <div className="neu-card" style={{ padding: "36px 32px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
-            <span className="neu-icon" style={{ width: 40, height: 40 }}>
-              <Shield style={{ width: 20, height: 20, color: "var(--text-primary)" }} />
-            </span>
-            <div>
-              <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: 2, letterSpacing: "0.05em" }}>MODE 2</div>
-              <h2 style={{ fontWeight: 700, fontSize: "1.25rem", color: "var(--text-primary)", margin: 0, letterSpacing: "-0.02em" }}>Classic Duel</h2>
-            </div>
+        <div style={{ padding: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            <Shield style={{ width: 20, height: 20, color: "var(--text-muted)" }} />
+            <h2 style={{ fontWeight: 600, fontSize: "1.4rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.02em" }}>Classic Duel</h2>
           </div>
-
-          <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: 24 }}>
-            Traditional ICPC style contest. All problems are available immediately. Solve in any order with penalty time calculations.
+          <p style={{ fontSize: "0.95rem", color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 20, maxWidth: 360 }}>
+            Traditional ICPC style contest with penalty time calculations.
           </p>
-
-          <ul style={{ listStyle: "none", margin: "0 0 28px", padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
-            {[
-              "All problems unlocked from minute zero",
-              "20-minute penalty per wrong submission prior to AC",
-              "Ranked by Accepted count, then penalty time",
-            ].map((feat) => (
-              <li key={feat} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-                <CheckCircle2 style={{ width: 15, height: 15, color: "var(--accent)", flexShrink: 0, marginTop: 1 }} />
-                {feat}
-              </li>
-            ))}
-          </ul>
-
-          <Link
-            href="/create?mode=CLASSIC"
-            className="neu-btn"
-            style={{ fontSize: "0.82rem", padding: "10px 22px", display: "inline-flex" }}
-          >
-            <span>Host a Classic Duel</span>
-            <ArrowRight style={{ width: 14, height: 14, color: "var(--accent)" }} />
+          <Link href="/create?mode=CLASSIC" className="minimal-link-group">
+            <span>Host Classic</span>
+            <ArrowRight className="arrow-icon" style={{ width: 14, height: 14 }} />
           </Link>
         </div>
+
       </section>
+      </div>
     </div>
   );
 }

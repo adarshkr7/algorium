@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   Swords, User as UserIcon, LogOut, Zap,
   ShieldAlert, ExternalLink, RefreshCw,
@@ -15,6 +15,34 @@ type LoginStep = "handle" | "password" | "verify" | "register";
 export const Navbar: React.FC = () => {
   const { user, setUser, logout } = useUser();
   const router = useRouter();
+  const pathname = usePathname();
+
+  const [activeContest, setActiveContest] = useState<any>(null);
+
+  useEffect(() => {
+    if (!user) {
+      setActiveContest(null);
+      return;
+    }
+    const fetchActiveContest = async () => {
+      try {
+        const res = await fetch(`/api/users/active-room?userId=${user.id}`);
+        const data = await res.json();
+        if (data.room) {
+          setActiveContest(data.room);
+        } else {
+          setActiveContest(null);
+        }
+      } catch (err) {
+        console.error("Failed to fetch active contest", err);
+      }
+    };
+    fetchActiveContest();
+    const interval = setInterval(fetchActiveContest, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
+
+  const showActiveBanner = activeContest && !pathname.startsWith("/arena") && !pathname.startsWith("/room");
 
   const [handleInput, setHandleInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
@@ -152,18 +180,24 @@ export const Navbar: React.FC = () => {
 
   return (
     <>
-      {/* ── Premium Glass Navbar ── */}
-      <header style={{
-        position: "sticky", top: 0, zIndex: 50,
-        width: "100%",
-        background: "rgba(9, 9, 11, 0.8)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        borderBottom: "1px solid var(--border)",
-        padding: "0 24px",
-        height: "64px",
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
-      }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 50, width: "100%" }}>
+        {showActiveBanner && (
+          <div style={{ background: "#FFFFFF", color: "#000000", padding: "10px 24px", display: "flex", justifyContent: "center", alignItems: "center", gap: 16, fontSize: "0.85rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+            <span>Active Duel: {activeContest.contest?.name || "Match"} ({activeContest.code})</span>
+            <Link href={activeContest.status === "WAITING" ? `/room/${activeContest.code}` : `/arena/${activeContest.code}`} style={{ background: "#000", color: "#FFF", padding: "6px 16px", borderRadius: "100px", textDecoration: "none", fontSize: "0.75rem", fontWeight: 800 }}>
+              JOIN
+            </Link>
+          </div>
+        )}
+        {/* ── Seamless Navbar ── */}
+        <header style={{
+          width: "100%",
+          background: "#000000",
+          borderBottom: "none",
+          padding: "0 24px",
+          height: "64px",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+        }}>
         {/* Logo */}
         <Link href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0 }}>
           <span style={{ fontWeight: 800, fontSize: "1.25rem", color: "var(--accent)", letterSpacing: "-0.02em" }}>
@@ -239,8 +273,7 @@ export const Navbar: React.FC = () => {
             {/* Search icon button */}
             <button
               onClick={searchExpanded ? handleSearch as any : openSearch}
-              className="neu-btn"
-              style={{ padding: "10px", borderRadius: "50%" }}
+              style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: "10px" }}
               title="Search player profile"
             >
               <Search style={{ width: 16, height: 16 }} />
@@ -336,6 +369,7 @@ export const Navbar: React.FC = () => {
           )}
         </div>
       </header>
+      </div>
 
       {/* ── Login Modal ── */}
       {showLoginModal && (

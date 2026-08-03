@@ -87,298 +87,215 @@ function CreateContestPageInner() {
   };
 
   const S = {
-    card: { padding: "28px 32px", marginBottom: 0 } as React.CSSProperties,
-    label: { display: "block", marginBottom: 10 } as React.CSSProperties,
+    card: { marginBottom: 48 } as React.CSSProperties,
+    label: { display: "block", marginBottom: 12, fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase" as any } as React.CSSProperties,
+    unselectedBtn: { display: "flex", flexDirection: "column" as any, gap: 6, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", padding: "16px 20px", color: "var(--text-secondary)", cursor: "pointer", transition: "all 0.2s", textAlign: "left" as any, flex: 1 } as React.CSSProperties,
+    selectedBtn: { display: "flex", flexDirection: "column" as any, gap: 6, background: "#FFFFFF", border: "1px solid #FFFFFF", borderRadius: "12px", padding: "16px 20px", color: "#000000", cursor: "pointer", transition: "all 0.2s", textAlign: "left" as any, flex: 1 } as React.CSSProperties,
+    bigInput: { background: "transparent", border: "none", borderBottom: "2px solid #222", color: "#FFFFFF", fontSize: "1.8rem", fontWeight: 700, padding: "4px 0", outline: "none", width: "100%", letterSpacing: "-0.02em", transition: "border-color 0.3s" } as React.CSSProperties,
   };
 
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto" }}>
-      {/* Header */}
-      <div className="animate-blur-reveal" style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 36 }}>
-        <span className="neu-icon" style={{ width: 56, height: 56, background: "var(--bg-invert)", border: "none", flexShrink: 0 }}>
-          <Swords style={{ width: 26, height: 26, color: "var(--text-invert)" }} />
-        </span>
-        <div>
-          <h1 style={{ fontWeight: 800, fontSize: "1.8rem", color: "var(--text-primary)", margin: 0, letterSpacing: "-0.02em" }}>
-            Create Contest Duel
+    <div style={{ position: "fixed", top: 64, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", overflow: "hidden", padding: "40px" }}>
+      <div style={{ maxWidth: 1100, width: "100%", margin: "0 auto", display: "flex", flexDirection: "column", height: "100%" }}>
+        
+        {/* Main Heading Always on Top */}
+        <div style={{ flexShrink: 0 }}>
+          <h1 style={{ fontWeight: 800, fontSize: "3.5rem", color: "#FFFFFF", margin: "0 0 40px", letterSpacing: "-0.05em", lineHeight: 1 }}>
+            Create Duel.
           </h1>
-          <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", margin: "4px 0 0" }}>
-            Choose hosting mode, contest format, rating ranges, and problem filters
-          </p>
-        </div>
-      </div>
-
-      {/* Error */}
-      {error && (
-        <div className="animate-shake" style={{
-          display: "flex", alignItems: "center", gap: 12,
-          padding: "14px 18px", borderRadius: "var(--r-md)",
-          background: "var(--bg-subtle)",
-          border: "1px solid var(--danger)",
-          marginBottom: 24, fontSize: "0.85rem",
-          color: "var(--danger)", fontWeight: 600,
-        }}>
-          <AlertTriangle style={{ width: 16, height: 16, flexShrink: 0 }} />
-          {error}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="stagger-children" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-
-        {/* Contest Name */}
-        <div className="neu-card" style={S.card}>
-          <label className="neu-label" style={S.label}>Contest Name</label>
-          <input
-            type="text" value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="neu-input" required
-            style={{ fontWeight: 600 }}
-          />
-        </div>
-
-        {/* HOSTING TYPE SELECTOR */}
-        <div className="neu-card" style={S.card}>
-          <label className="neu-label" style={S.label}>Hosting Type</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            {([
-              {
-                id: "PLAYER_HOST",
-                label: "Player Host (1v1)",
-                desc: "You host and compete directly against an invited opponent.",
-                icon: <Swords style={{ width: 20, height: 20, color: hostingType === "PLAYER_HOST" ? "#fff" : "var(--accent)" }} />,
-                color: "var(--accent)", glow: "var(--accent-glow)",
-              },
-              {
-                id: "SUPERVISED",
-                label: "Supervised Match",
-                desc: "You create & supervise a 1v1 duel between 2 invited contestants.",
-                icon: <Eye style={{ width: 20, height: 20, color: hostingType === "SUPERVISED" ? "#fff" : "var(--warning)" }} />,
-                color: "var(--warning)", glow: "rgba(245,158,11,0.3)",
-              },
-            ] as const).map((h) => (
-              <button
-                key={h.id} type="button"
-                onClick={() => setHostingType(h.id)}
-                style={{
-                  display: "flex", alignItems: "flex-start", gap: 12,
-                  padding: "18px 20px", borderRadius: "var(--r-md)",
-                  cursor: "pointer", textAlign: "left",
-                  transition: "all var(--t-base)",
-                  background: "transparent",
-                  border: `1px solid ${hostingType === h.id ? "var(--text-primary)" : "var(--border)"}`,
-                  color: hostingType === h.id ? "var(--text-primary)" : "var(--text-secondary)",
-                }}
-              >
-                <span className="neu-icon" style={{
-                  width: 38, height: 38, flexShrink: 0,
-                  background: hostingType === h.id ? "var(--bg-hover)" : "var(--bg-subtle)",
-                  border: hostingType === h.id ? "none" : "1px solid var(--border)",
-                }}>
-                  {h.icon}
-                </span>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: 4, color: "var(--text-primary)" }}>
-                    {h.label}
-                  </div>
-                  <div style={{ fontSize: "0.75rem", lineHeight: 1.5 }}>{h.desc}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Mode Selector */}
-        <div className="neu-card" style={S.card}>
-          <label className="neu-label" style={S.label}>Contest Mode</label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            {([
-              {
-                id: "BLITZ", label: "Blitz Mode",
-                desc: "Sequential unlock race. Permanent lock on solve!",
-                icon: <Zap style={{ width: 20, height: 20, color: mode === "BLITZ" ? "#fff" : "var(--success)" }} />,
-                color: "var(--success)", glow: "rgba(34,197,94,0.25)",
-              },
-              {
-                id: "CLASSIC", label: "Classic Duel",
-                desc: "All problems open. Ranked by AC & penalty time.",
-                icon: <Shield style={{ width: 20, height: 20, color: mode === "CLASSIC" ? "#fff" : "var(--accent)" }} />,
-                color: "var(--accent)", glow: "var(--accent-glow)",
-              },
-            ] as const).map((m) => (
-              <button
-                key={m.id} type="button"
-                onClick={() => setMode(m.id)}
-                style={{
-                  display: "flex", alignItems: "flex-start", gap: 12,
-                  padding: "18px 20px", borderRadius: "var(--r-md)",
-                  cursor: "pointer", textAlign: "left",
-                  transition: "all var(--t-base)",
-                  background: "transparent",
-                  border: `1px solid ${mode === m.id ? "var(--text-primary)" : "var(--border)"}`,
-                  color: mode === m.id ? "var(--text-primary)" : "var(--text-secondary)",
-                }}
-              >
-                <span className="neu-icon" style={{
-                  width: 38, height: 38, flexShrink: 0,
-                  background: mode === m.id ? "var(--bg-hover)" : "var(--bg-subtle)",
-                  border: mode === m.id ? "none" : "1px solid var(--border)",
-                }}>
-                  {m.icon}
-                </span>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: 4, color: "var(--text-primary)" }}>
-                    {m.label}
-                  </div>
-                  <div style={{ fontSize: "0.75rem", lineHeight: 1.5 }}>{m.desc}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Problem Count & Duration */}
-        <div className="neu-card" style={S.card}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-            <div>
-              <label className="neu-label" style={{ ...S.label, display: "flex", alignItems: "center", gap: 6 }}>
-                <Hash style={{ width: 12, height: 12, color: "var(--success)" }} /> Number of Problems
-              </label>
-              <select value={problemCount} onChange={(e) => handleProblemCountChange(Number(e.target.value))}
-                className="neu-input neu-select font-mono">
-                <option value={1}>1 Problem (Speed Duel)</option>
-                <option value={2}>2 Problems</option>
-                <option value={3}>3 Problems (Recommended)</option>
-                <option value={4}>4 Problems</option>
-                <option value={5}>5 Problems (Full Contest)</option>
-              </select>
+          {error && (
+            <div className="animate-shake" style={{ color: "var(--danger)", fontSize: "0.9rem", fontWeight: 600, marginBottom: 20 }}>
+              {error}
             </div>
-            <div>
-              <label className="neu-label" style={{ ...S.label, display: "flex", alignItems: "center", gap: 6 }}>
-                <Clock style={{ width: 12, height: 12, color: "var(--accent)" }} /> Duration (Minutes)
-              </label>
-              <select value={durationMinutes} onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                className="neu-input neu-select font-mono">
-                <option value={15}>15 Minutes</option>
-                <option value={30}>30 Minutes</option>
-                <option value={45}>45 Minutes</option>
-                <option value={60}>60 Minutes</option>
-              </select>
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* Rating Configuration */}
-        <div className="neu-card" style={S.card}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <label className="neu-label" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
-              <Sliders style={{ width: 12, height: 12, color: "var(--warning)" }} /> Rating Selection
-            </label>
-            <div style={{ display: "flex", background: "var(--neu-bg)", padding: 4, borderRadius: "var(--r-md)", gap: 4 }}>
-              <button type="button" onClick={() => setRatingMode("RANGE")} className={ratingMode === "RANGE" ? "neu-btn-primary neu-btn" : "neu-btn"} style={{ padding: "4px 12px", fontSize: "0.75rem", border: "none" }}>Range</button>
-              <button type="button" onClick={() => setRatingMode("EXACT")} className={ratingMode === "EXACT" ? "neu-btn-primary neu-btn" : "neu-btn"} style={{ padding: "4px 12px", fontSize: "0.75rem", border: "none" }}>Exact</button>
-            </div>
-          </div>
+        {/* Scrollable Form Area */}
+        <form onSubmit={handleSubmit} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", paddingRight: 20 }} id="create-contest-form">
           
-          {ratingMode === "RANGE" ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div>
-                <span className="neu-label" style={{ display: "block", marginBottom: 6 }}>Min Rating</span>
-                <input type="number" step={100} min={800} max={3500} value={minRating}
-                  onChange={(e) => setMinRating(Number(e.target.value))}
-                  className="neu-input font-mono" />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 80px" }}>
+            
+            {/* Left Column Settings */}
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {/* Contest Name */}
+              <div style={S.card}>
+                <label style={S.label}>Duel Name</label>
+                <input
+                  type="text" value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  style={S.bigInput} required
+                  onFocus={(e) => e.target.style.borderColor = "#FFFFFF"}
+                  onBlur={(e) => e.target.style.borderColor = "#222"}
+                />
               </div>
-              <div>
-                <span className="neu-label" style={{ display: "block", marginBottom: 6 }}>Max Rating</span>
-                <input type="number" step={100} min={800} max={3500} value={maxRating}
-                  onChange={(e) => setMaxRating(Number(e.target.value))}
-                  className="neu-input font-mono" />
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: problemCount > 3 ? "1fr 1fr" : "1fr", gap: 12 }}>
-              {exactRatings.map((rating, idx) => (
-                <div key={idx} style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--neu-bg)", padding: "10px 14px", borderRadius: "var(--r-md)", boxShadow: "var(--neu-inset-sm)" }}>
-                  <span className="font-mono" style={{ fontSize: "0.8rem", color: "var(--text-secondary)", fontWeight: 700, width: 24 }}>P{idx + 1}</span>
-                  <input type="range" min={800} max={3500} step={100} value={rating}
-                    onChange={(e) => {
-                      const newRatings = [...exactRatings];
-                      newRatings[idx] = Number(e.target.value);
-                      setExactRatings(newRatings);
-                    }}
-                    style={{ flex: 1, accentColor: "var(--accent)" }}
-                  />
-                  <span className="font-mono" style={{ fontSize: "0.85rem", color: "var(--accent)", fontWeight: 700, width: 44, textAlign: "right" }}>
-                    {rating}
-                  </span>
+
+              {/* HOSTING TYPE SELECTOR */}
+              <div style={S.card}>
+                <label style={S.label}>Role</label>
+                <div style={{ position: "relative", display: "flex", background: "#000000", border: "none", borderRadius: "100px", padding: 6, marginBottom: 12 }}>
+                  <div style={{
+                    position: "absolute", top: 6, bottom: 6, left: hostingType === "PLAYER_HOST" ? 6 : "calc(50% + 3px)",
+                    width: "calc(50% - 9px)", background: "#FFFFFF", borderRadius: "100px",
+                    transition: "left 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
+                  }} />
+                  
+                  <button type="button" onClick={() => setHostingType("PLAYER_HOST")} 
+                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
+                             fontSize: "1.1rem", fontWeight: 700, color: hostingType === "PLAYER_HOST" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
+                    Player
+                  </button>
+                  
+                  <button type="button" onClick={() => setHostingType("SUPERVISED")} 
+                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
+                             fontSize: "1.1rem", fontWeight: 700, color: hostingType === "SUPERVISED" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
+                    Supervisor
+                  </button>
                 </div>
-              ))}
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, height: 16 }}>
+                  {hostingType === "PLAYER_HOST" ? "Compete directly against an opponent." : "Watch two players compete in your duel."}
+                </p>
+              </div>
+
+              {/* Mode Selector */}
+              <div style={{ ...S.card, marginBottom: 0 }}>
+                <label style={S.label}>Mode</label>
+                <div style={{ position: "relative", display: "flex", background: "#000000", border: "none", borderRadius: "100px", padding: 6, marginBottom: 12 }}>
+                  <div style={{
+                    position: "absolute", top: 6, bottom: 6, left: mode === "BLITZ" ? 6 : "calc(50% + 3px)",
+                    width: "calc(50% - 9px)", background: "#FFFFFF", borderRadius: "100px",
+                    transition: "left 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
+                  }} />
+                  
+                  <button type="button" onClick={() => setMode("BLITZ")} 
+                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
+                             fontSize: "1.1rem", fontWeight: 700, color: mode === "BLITZ" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
+                    Blitz
+                  </button>
+                  
+                  <button type="button" onClick={() => setMode("CLASSIC")} 
+                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
+                             fontSize: "1.1rem", fontWeight: 700, color: mode === "CLASSIC" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
+                    Classic
+                  </button>
+                </div>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, height: 16 }}>
+                  {mode === "BLITZ" ? "Linear race. Lock on solve." : "ICPC style with penalty time."}
+                </p>
+              </div>
             </div>
-          )}
-        </div>
 
-        {/* Allowed Tags */}
-        <div className="neu-card" style={S.card}>
-          <label className="neu-label" style={{ ...S.label, display: "flex", alignItems: "center", gap: 6 }}>
-            <Tag style={{ width: 12, height: 12, color: "var(--success)" }} /> Allowed Tags
-          </label>
-          <div className="neu-inset" style={{ padding: "14px", display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 160, overflowY: "auto" }}>
-            {POPULAR_TAGS.map((tag) => (
-              <button
-                key={tag} type="button" onClick={() => toggleAllowedTag(tag)}
-                className={`neu-tag ${selectedAllowedTags.includes(tag) ? "neu-tag-selected-green" : ""}`}
-              >
-                {tag} {selectedAllowedTags.includes(tag) && "✓"}
-              </button>
-            ))}
+            {/* Right Column Settings */}
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {/* Problem Count & Duration */}
+              <div style={S.card}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40 }}>
+                  <div>
+                    <label style={S.label}>Problems</label>
+                    <select value={problemCount} onChange={(e) => handleProblemCountChange(Number(e.target.value))}
+                      style={{ ...S.bigInput, appearance: "none", cursor: "pointer" }}>
+                      {[1,2,3,4,5].map(n => <option key={n} value={n} style={{ background: "#000", fontSize: "1rem" }}>{n}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={S.label}>Duration</label>
+                    <select value={durationMinutes} onChange={(e) => setDurationMinutes(Number(e.target.value))}
+                      style={{ ...S.bigInput, appearance: "none", cursor: "pointer" }}>
+                      <option value={15} style={{ background: "#000", fontSize: "1rem" }}>15m</option>
+                      <option value={30} style={{ background: "#000", fontSize: "1rem" }}>30m</option>
+                      <option value={45} style={{ background: "#000", fontSize: "1rem" }}>45m</option>
+                      <option value={60} style={{ background: "#000", fontSize: "1rem" }}>60m</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rating Configuration */}
+              <div style={S.card}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                  <label style={{ ...S.label, marginBottom: 0 }}>Rating</label>
+                  <div style={{ display: "flex", gap: 16 }}>
+                    <button type="button" onClick={() => setRatingMode("RANGE")} style={{ background: "none", border: "none", padding: 0, fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: ratingMode === "RANGE" ? "#FFFFFF" : "#444", cursor: "pointer" }}>Range</button>
+                    <button type="button" onClick={() => setRatingMode("EXACT")} style={{ background: "none", border: "none", padding: 0, fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: ratingMode === "EXACT" ? "#FFFFFF" : "#444", cursor: "pointer" }}>Exact</button>
+                  </div>
+                </div>
+                
+                {ratingMode === "RANGE" ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+                    <input type="number" step={100} min={800} max={3500} value={minRating} onChange={(e) => setMinRating(Number(e.target.value))}
+                      style={{ ...S.bigInput, width: "100px", textAlign: "center" }} onFocus={(e) => e.target.style.borderColor = "#FFFFFF"} onBlur={(e) => e.target.style.borderColor = "#222"} />
+                    <span style={{ fontSize: "1.8rem", color: "#444", fontWeight: 700 }}>—</span>
+                    <input type="number" step={100} min={800} max={3500} value={maxRating} onChange={(e) => setMaxRating(Number(e.target.value))}
+                      style={{ ...S.bigInput, width: "100px", textAlign: "center" }} onFocus={(e) => e.target.style.borderColor = "#FFFFFF"} onBlur={(e) => e.target.style.borderColor = "#222"} />
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    {exactRatings.map((rating, idx) => (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: 20 }}>
+                        <span style={{ fontSize: "1rem", color: "#444", fontWeight: 700 }}>P{idx + 1}</span>
+                        <input type="range" min={800} max={3500} step={100} value={rating}
+                          onChange={(e) => {
+                            const newRatings = [...exactRatings];
+                            newRatings[idx] = Number(e.target.value);
+                            setExactRatings(newRatings);
+                          }}
+                          style={{ flex: 1, accentColor: "#FFFFFF", height: 2, background: "#222", appearance: "none", cursor: "pointer" }}
+                        />
+                        <span style={{ fontSize: "1.4rem", color: "#FFFFFF", fontWeight: 700, width: 60, textAlign: "right" }}>{rating}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Tags */}
+              <div style={{ ...S.card, marginBottom: 0 }}>
+                <label style={S.label}>Tags</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                  {POPULAR_TAGS.map((tag) => {
+                    const isAllowed = selectedAllowedTags.includes(tag);
+                    const isExcluded = selectedExcludedTags.includes(tag);
+                    return (
+                      <button
+                        key={tag} type="button" 
+                        onClick={() => {
+                          if (isAllowed) { toggleAllowedTag(tag); toggleExcludedTag(tag); }
+                          else if (isExcluded) { toggleExcludedTag(tag); }
+                          else { toggleAllowedTag(tag); }
+                        }}
+                        style={{ 
+                          background: isAllowed ? "#FFFFFF" : isExcluded ? "var(--danger)" : "transparent",
+                          border: `1px solid ${isAllowed ? "#FFFFFF" : isExcluded ? "var(--danger)" : "rgba(255,255,255,0.15)"}`,
+                          color: isAllowed ? "#000" : isExcluded ? "#FFF" : "var(--text-secondary)",
+                          padding: "6px 14px", borderRadius: "100px", fontSize: "0.85rem", fontWeight: 500, cursor: "pointer", transition: "all 0.2s"
+                        }}
+                      >
+                        {tag}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p style={{ fontSize: "0.65rem", color: "#555", marginTop: 12, textTransform: "uppercase", letterSpacing: "0.1em" }}>Click once to allow, twice to exclude</p>
+              </div>
+            </div>
+
           </div>
-        </div>
 
-        {/* Excluded Tags */}
-        <div className="neu-card" style={S.card}>
-          <label className="neu-label" style={{ ...S.label, display: "flex", alignItems: "center", gap: 6 }}>
-            <Tag style={{ width: 12, height: 12, color: "var(--danger)" }} /> Excluded Tags (Optional)
-          </label>
-          <div className="neu-inset" style={{ padding: "14px", display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 130, overflowY: "auto" }}>
-            {POPULAR_TAGS.map((tag) => (
-              <button
-                key={`ex-${tag}`} type="button" onClick={() => toggleExcludedTag(tag)}
-                className={`neu-tag ${selectedExcludedTags.includes(tag) ? "neu-tag-selected-red" : ""}`}
-              >
-                {tag} {selectedExcludedTags.includes(tag) && "✕"}
-              </button>
-            ))}
+          {/* Submit */}
+          <div style={{ marginTop: 40, paddingBottom: 40 }}>
+            <button
+              type="submit" disabled={loading}
+              style={{ 
+                background: "#FFFFFF", color: "#000000", width: "100%", padding: "24px", 
+                fontSize: "1.2rem", fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase",
+                border: "none", cursor: loading ? "not-allowed" : "pointer", transition: "opacity 0.2s", opacity: loading ? 0.7 : 1
+              }}
+            >
+              {loading ? "Generating..." : "Create"}
+            </button>
           </div>
-        </div>
 
-        {/* Seed */}
-        <div className="neu-card" style={S.card}>
-          <label className="neu-label" style={S.label}>Random Seed (Optional)</label>
-          <input
-            type="text"
-            placeholder="Leave empty for auto-generated seed"
-            value={seed}
-            onChange={(e) => setSeed(e.target.value)}
-            className="neu-input font-mono"
-          />
-        </div>
-
-        {/* Submit */}
-        <button
-          type="submit" disabled={loading}
-          className="neu-btn-primary neu-btn"
-          style={{ width: "100%", padding: "18px 28px", fontSize: "1rem", borderRadius: "var(--r-md)" }}
-        >
-          {loading ? (
-            <span>Generating Official Codeforces Problems...</span>
-          ) : (
-            <>
-              <Sparkles style={{ width: 18, height: 18 }} />
-              <span>Generate Contest & Create Room</span>
-              <ArrowRight style={{ width: 18, height: 18 }} />
-            </>
-          )}
-        </button>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }
