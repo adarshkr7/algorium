@@ -19,6 +19,16 @@ export async function GET(req: Request) {
           { player2Id: userId },
         ],
         status: { in: ["WAITING", "IN_PROGRESS"] },
+        NOT: {
+          contest: {
+            participants: {
+              some: {
+                userId: userId,
+                hasResigned: true,
+              },
+            },
+          },
+        },
       },
       include: {
         contest: true,

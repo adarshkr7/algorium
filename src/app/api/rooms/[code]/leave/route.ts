@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { createClient } from "@supabase/supabase-js";
 
 export async function POST(
   req: Request,
@@ -22,29 +23,61 @@ export async function POST(
       return NextResponse.json({ error: "Room not found" }, { status: 404 });
     }
 
-    if (room.hostId === userId) {
-      // Host leaves: cancel room or set status to FINISHED
+    if (room.status === "IN_PROGRESS" && room.contest) {
+      // Mark the participant as resigned
+      const participant = await prisma.participant.findFirst({
+        where: { contestId: room.contest.id, userId },
+      });
+
+      if (participant) {
+        await prisma.participant.update({
+          where: { id: participant.id },
+          data: { hasResigned: true },
+        });
+
+        // Check if all participants (host and guest) have resigned
+        const participants = await prisma.participant.findMany({
+          where: { contestId: room.contest.id },
+        });
+        
+        const allResigned = participants.length > 0 && participants.every((p) => p.hasResigned);
+        
+        if (allResigned) {
+          // If both resigned, end the contest
+          await prisma.room.update({
+            where: { id: room.id },
+            data: { status: "FINISHED" },
+          });
+          await prisma.contest.update({
+            where: { id: room.contest.id },
+            data: { status: "FINISHED", endTime: new Date() },
+          });
+        }
+      }
+    } else {
+      // Room hasn't started yet, or finished. Anyone leaving cancels the room for everyone.
       await prisma.room.update({
         where: { id: room.id },
-        data: { status: "FINISHED" },
+        data: { status: "CANCELLED" },
       });
       if (room.contest) {
         await prisma.contest.update({
           where: { id: room.contest.id },
-          data: { status: "FINISHED" },
+          data: { status: "CANCELLED" },
         });
       }
-    } else if (room.guestId === userId) {
-      // Guest leaves: remove guestId from room
-      await prisma.room.update({
-        where: { id: room.id },
-        data: { guestId: null },
+
+      const leaver = await prisma.user.findUnique({ where: { id: userId } });
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
+      );
+      const channel = supabase.channel(`room-${code}`);
+      await channel.send({
+        type: 'broadcast',
+        event: 'room-cancelled',
+        payload: { by: leaver?.handle || 'A user' }
       });
-      if (room.contest) {
-        await prisma.participant.deleteMany({
-          where: { contestId: room.contest.id, userId },
-        });
-      }
     }
 
     return NextResponse.json({ success: true });

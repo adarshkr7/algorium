@@ -31,7 +31,7 @@ function calculateStandings(contest: any, p1: any, p2: any) {
   const problems = contest.problems || [];
 
   function getPlayerStats(userId: string | null) {
-    if (!userId) return { userId: null, acceptedCount: 0, penaltyMinutes: 0, lockedWon: 0, wrongSubsBeforeAC: 0, lastACTime: 0 };
+    if (!userId) return { userId: null, acceptedCount: 0, penaltyMinutes: 0, lockedWon: 0, wrongSubsBeforeAC: 0, lastACTime: 0, hasResigned: false };
     let acceptedCount = 0;
     let penaltyMinutes = 0;
     let lockedWon = 0;
@@ -65,7 +65,10 @@ function calculateStandings(contest: any, p1: any, p2: any) {
       }
     }
 
-    return { userId, acceptedCount, penaltyMinutes, lockedWon, wrongSubsBeforeAC, lastACTime };
+    const participant = contest.participants?.find((p: any) => p.userId === userId);
+    const hasResigned = participant?.hasResigned || false;
+
+    return { userId, acceptedCount, penaltyMinutes, lockedWon, wrongSubsBeforeAC, lastACTime, hasResigned };
   }
 
   const p1Stats = getPlayerStats(p1?.id);
@@ -282,6 +285,11 @@ export async function POST(
       const p2AC = standings.guest.acceptedCount;
       const total = updatedContest!.problems.length;
       if (p1AC === total && p2AC === total) await finishContest(updatedContest, roomCode);
+    }
+
+    // Check if both users have resigned
+    if (standings.host.hasResigned && standings.guest.hasResigned) {
+      await finishContest(updatedContest, roomCode);
     }
 
     if (newSubmissionsCount > 0) {

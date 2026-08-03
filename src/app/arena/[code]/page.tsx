@@ -57,6 +57,11 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
 
         const rm = data.room;
         const ct = rm.contest;
+        
+        if (rm.status === "CANCELLED") {
+          router.push("/");
+          return;
+        }
 
         if (isMounted) {
           setRoom(rm);
@@ -220,16 +225,18 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
 
   const handleLeaveContest = async () => {
     if (!user) { router.push("/"); return; }
+    const confirmed = window.confirm("Are you sure you want to quit the contest? You will resign but can still spectate.");
+    if (!confirmed) return;
     try {
       await fetch(`/api/rooms/${code}/leave`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: user.id }),
       });
+      setNotification("You have resigned from the contest.");
+      setTimeout(() => setNotification(null), 4000);
     } catch (e) {
       console.error("Error leaving contest:", e);
-    } finally {
-      router.push("/");
     }
   };
 
@@ -559,7 +566,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
           </div>
 
           <button onClick={handleLeaveContest} className="neu-btn-danger neu-btn" style={{ padding: "10px 16px", fontSize: "0.8rem" }}>
-            <LogOut style={{ width: 14, height: 14 }} /> Leave
+            <LogOut style={{ width: 14, height: 14 }} /> Quit Contest
           </button>
         </div>
       </div>
@@ -716,7 +723,10 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <img src={player1?.avatar || DEFAULT_AVATAR} alt={player1?.handle || "Player 1"} style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} />
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--text-primary)" }}>{player1?.handle || "Player 1"}</div>
+                    <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--text-primary)" }}>
+                      {player1?.handle || "Player 1"}
+                      {standings?.host?.hasResigned && <span className="neu-chip" style={{ marginLeft: 8, background: "var(--danger-soft)", color: "var(--danger)", fontSize: "0.6rem" }}>RESIGNED</span>}
+                    </div>
                     <div className="neu-label" style={{ fontSize: "0.6rem" }}>PLAYER 1</div>
                   </div>
                 </div>
@@ -734,7 +744,10 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <img src={player2?.avatar || DEFAULT_AVATAR} alt={player2?.handle || "Player 2"} style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} />
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--text-primary)" }}>{player2?.handle || "Player 2"}</div>
+                    <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--text-primary)" }}>
+                      {player2?.handle || "Player 2"}
+                      {standings?.guest?.hasResigned && <span className="neu-chip" style={{ marginLeft: 8, background: "var(--danger-soft)", color: "var(--danger)", fontSize: "0.6rem" }}>RESIGNED</span>}
+                    </div>
                     <div className="neu-label" style={{ fontSize: "0.6rem" }}>PLAYER 2</div>
                   </div>
                 </div>

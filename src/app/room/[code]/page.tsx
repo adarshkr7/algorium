@@ -46,6 +46,12 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
           return;
         }
 
+        if (currentRoom.status === "CANCELLED") {
+          if (isMounted) setError("Contest was cancelled");
+          setTimeout(() => router.push("/"), 2000);
+          return;
+        }
+
         const isSupervised = currentRoom.hostingType === "SUPERVISED";
         const isHostUser = user && user.id === currentRoom.hostId;
 
@@ -125,6 +131,10 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
       .on("broadcast", { event: "player-joined" }, () => {
         if (isMounted) fetchRoomState();
       })
+      .on("broadcast", { event: "room-cancelled" }, (payload: any) => {
+        window.alert(`Contest ended by ${payload.payload.by}`);
+        router.push("/");
+      })
       .subscribe(async (status: string) => {
         if (status === "SUBSCRIBED" && user) {
           await channel.track({
@@ -178,6 +188,8 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
 
   const handleLeaveRoom = async () => {
     if (!user) { router.push("/"); return; }
+    const confirmed = window.confirm("Are you sure you want to quit? This will remove you from the room.");
+    if (!confirmed) return;
     try {
       await fetch(`/api/rooms/${code}/leave`, {
         method: "POST",
@@ -292,7 +304,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
               {copied ? "COPIED" : "COPY CODE"}
             </button>
             <button onClick={handleLeaveRoom} style={{ background: "transparent", border: "1px solid rgba(255,70,70,0.3)", borderRadius: "100px", padding: "12px 24px", color: "var(--danger)", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-              <LogOut style={{ width: 16, height: 16 }} /> LEAVE
+              <LogOut style={{ width: 16, height: 16 }} /> QUIT CONTEST
             </button>
           </div>
         </div>

@@ -100,6 +100,7 @@ model Participant {
   penalty       Int      @default(0)
   acceptedCount Int      @default(0)
   isWinner      Boolean  @default(false)
+  hasResigned   Boolean  @default(false)
 
   contest       Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
   user          User     @relation(fields: [userId], references: [id])
