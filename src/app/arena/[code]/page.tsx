@@ -497,7 +497,9 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
     );
   }
 
+  const isSupervisor = user && user.id === room.hostId && isSupervised;
   const selectedProblem = problems[selectedProblemIndex] || problems[0];
+
 
   const getProblemStatus = (prob: any) => {
     if (!prob) return { isLocked: false, lockedByPlayer1: false, lockedByPlayer2: false, myAC: false, oppAC: false };
