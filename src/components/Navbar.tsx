@@ -1,31 +1,57 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
-  Swords, User as UserIcon, LogOut, Zap, Trophy,
-  ShieldAlert, Copy, CheckCircle, ExternalLink, RefreshCw,
-  Sun, Moon,
+  Swords, User as UserIcon, LogOut, Zap,
+  ShieldAlert, ExternalLink, RefreshCw,
+  CheckCircle, Search, X,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
-import { useTheme } from "@/context/ThemeContext";
 
 type LoginStep = "handle" | "password" | "verify" | "register";
 
 export const Navbar: React.FC = () => {
   const { user, setUser, logout } = useUser();
-  const { theme, toggleTheme } = useTheme();
+  const router = useRouter();
+
   const [handleInput, setHandleInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [emailInput, setEmailInput] = useState("");
   const [passwordToken, setPasswordToken] = useState("");
-  
+
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [step, setStep] = useState<LoginStep>("handle");
   const [pendingHandle, setPendingHandle] = useState("");
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Profile search
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchRef = useRef<HTMLFormElement>(null);
+
+  // Close search on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchFocused(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = searchQuery.trim();
+    if (!q) return;
+    router.push(`/profile/${encodeURIComponent(q)}`);
+    setSearchQuery("");
+    setSearchFocused(false);
+  };
 
   const resetModal = () => {
     setStep("handle"); setHandleInput(""); setPasswordInput(""); setEmailInput("");
@@ -112,40 +138,101 @@ export const Navbar: React.FC = () => {
       <header style={{
         position: "sticky", top: 0, zIndex: 50,
         width: "100%",
-        background: "rgba(var(--bg-main-rgb, 9, 9, 11), 0.7)",
+        background: "rgba(9, 9, 11, 0.8)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         borderBottom: "1px solid var(--border)",
         padding: "0 24px",
         height: "64px",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        transition: "background var(--t-base)",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
       }}>
         {/* Logo */}
-        <Link href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none" }}>
+        <Link href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0 }}>
           <span style={{ fontWeight: 800, fontSize: "1.25rem", color: "var(--accent)", letterSpacing: "-0.02em" }}>
-            ALGO<span style={{ color: "var(--text-primary)" }}>RIUM</span>
+            ALGO<span style={{ color: "var(--text-secondary)" }}>RIUM</span>
           </span>
         </Link>
 
+        {/* Center: Profile Search */}
+        <form
+          ref={searchRef}
+          onSubmit={handleSearch}
+          style={{
+            position: "relative",
+            flex: 1,
+            maxWidth: 340,
+            margin: "0 auto",
+          }}
+        >
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: searchFocused ? "var(--bg-hover)" : "var(--bg-subtle)",
+            border: `1px solid ${searchFocused ? "var(--border-hover)" : "var(--border)"}`,
+            borderRadius: "var(--r-pill)",
+            padding: "0 14px",
+            height: 38,
+            transition: "all var(--t-fast)",
+            boxShadow: searchFocused ? "0 0 0 3px rgba(250,250,250,0.06)" : "none",
+          }}>
+            <Search style={{ width: 14, height: 14, color: searchFocused ? "var(--text-secondary)" : "var(--text-muted)", flexShrink: 0, transition: "color var(--t-fast)" }} />
+            <input
+              type="text"
+              placeholder="Search player profile..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              style={{
+                flex: 1,
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                color: "var(--text-primary)",
+                fontSize: "0.82rem",
+                fontFamily: "inherit",
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center" }}
+              >
+                <X style={{ width: 13, height: 13, color: "var(--text-muted)" }} />
+              </button>
+            )}
+          </div>
+          {/* Hint on focus */}
+          {searchFocused && searchQuery.trim() && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: 0, right: 0,
+              background: "var(--bg-subtle)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-md)",
+              padding: "10px 14px",
+              fontSize: "0.8rem",
+              color: "var(--text-secondary)",
+              boxShadow: "var(--shadow-md)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              cursor: "pointer",
+              zIndex: 60,
+            }}
+              onClick={handleSearch as any}
+            >
+              <Search style={{ width: 13, height: 13, color: "var(--text-muted)" }} />
+              View profile of <strong style={{ color: "var(--text-primary)" }}>{searchQuery.trim()}</strong>
+              <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace" }}>↵ Enter</span>
+            </div>
+          )}
+        </form>
 
-        {/* Right side: theme toggle + auth */}
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          {/* Theme Toggle */}
-          <button
-            onClick={toggleTheme}
-            className="neu-btn"
-            style={{ padding: "10px", borderRadius: "50%" }}
-            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
-          >
-            {theme === "dark"
-              ? <Sun style={{ width: 16, height: 16, color: "var(--warning)" }} />
-              : <Moon style={{ width: 16, height: 16, color: "var(--accent)" }} />
-            }
-          </button>
-
-        {/* Auth */}
-        <div>
+        {/* Right: Auth */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
           {user ? (
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <Link
@@ -155,7 +242,7 @@ export const Navbar: React.FC = () => {
               >
                 <img
                   src={user.avatar} alt={user.handle}
-                  style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", boxShadow: "var(--neu-shadow-sm)" }}
+                  style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", boxShadow: "var(--shadow-sm)" }}
                 />
                 <span style={{ fontSize: "0.8rem" }}>{user.handle}</span>
               </Link>
@@ -173,7 +260,6 @@ export const Navbar: React.FC = () => {
               Sign In with CF
             </button>
           )}
-        </div>
         </div>
       </header>
 
@@ -195,7 +281,7 @@ export const Navbar: React.FC = () => {
             style={{ width: "100%", maxWidth: 440, overflow: "hidden" }}
           >
             {/* Step indicator */}
-            <div style={{ display: "flex", borderBottom: "1px solid var(--shadow-dark)" }}>
+            <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
               {(["handle", "verify"] as const).map((s, i) => (
                 <div
                   key={s}
