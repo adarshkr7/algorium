@@ -264,6 +264,7 @@ export async function POST(
     const updatedContest = await prisma.contest.findUnique({
       where: { id: contest.id },
       include: {
+        room: { include: { host: true, guest: true, player1: true, player2: true } },
         problems: { orderBy: { indexInContest: "asc" } },
         participants: { include: { user: true } },
         submissions: { include: { user: true, problem: true }, orderBy: { timeSubmitted: "desc" } },
