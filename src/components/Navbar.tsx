@@ -33,7 +33,7 @@ export const Navbar: React.FC = () => {
   const [searchExpanded, setSearchExpanded] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-
+  const [showDropdown, setShowDropdown] = useState(false);
   // Close search on outside click or Escape
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -171,8 +171,15 @@ export const Navbar: React.FC = () => {
           </span>
         </Link>
 
-        {/* Right side: Search icon + Auth */}
+        {/* Right side: Standings, Contact, Search icon + Auth */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0, marginLeft: "auto" }}>
+
+          <Link href="/standings" className="neu-btn" style={{ padding: "8px 14px", fontWeight: 600, fontSize: "0.85rem", textDecoration: "none", border: "none", background: "transparent", boxShadow: "none" }}>
+            Standings
+          </Link>
+          <Link href="/contact" className="neu-btn" style={{ padding: "8px 14px", fontWeight: 600, fontSize: "0.85rem", textDecoration: "none", border: "none", background: "transparent", boxShadow: "none" }}>
+            Contact
+          </Link>
 
 
           {/* Collapsible search */}
@@ -271,21 +278,51 @@ export const Navbar: React.FC = () => {
           </div>
 
           {user ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <Link
-                href={`/profile/${encodeURIComponent(user.handle)}`}
-                className="neu-btn"
-                style={{ padding: "8px 14px", gap: "10px" }}
+            <div 
+              style={{ position: "relative", display: "inline-block" }}
+              onMouseEnter={() => setShowDropdown(true)}
+              onMouseLeave={() => setShowDropdown(false)}
+            >
+              <div
+                style={{ padding: "4px", borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", border: "none", background: "transparent" }}
               >
                 <img
                   src={user.avatar} alt={user.handle}
-                  style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", boxShadow: "var(--shadow-sm)" }}
+                  style={{ width: 34, height: 34, borderRadius: "50%", objectFit: "cover", boxShadow: "var(--shadow-sm)" }}
                 />
-                <span style={{ fontSize: "0.8rem" }}>{user.handle}</span>
-              </Link>
-              <button onClick={logout} className="neu-btn" style={{ padding: "10px", borderRadius: "50%" }} title="Sign Out">
-                <LogOut style={{ width: 16, height: 16, color: "var(--danger)" }} />
-              </button>
+              </div>
+              
+              {/* Dropdown Menu */}
+              {showDropdown && (
+                <div 
+                  style={{ 
+                    position: "absolute", top: "100%", right: 0, marginTop: "8px", 
+                    background: "var(--bg-subtle)", border: "1px solid var(--border)", 
+                    borderRadius: "var(--r-md)", padding: "8px",
+                    boxShadow: "var(--shadow-md)", display: "flex", flexDirection: "column", gap: "4px",
+                    minWidth: "160px", zIndex: 100
+                  }}
+                  className="animate-fade-in"
+                >
+                  <Link
+                    href={`/profile/${encodeURIComponent(user.handle)}`}
+                    className="neu-btn"
+                    style={{ padding: "10px 14px", justifyContent: "flex-start", width: "100%", fontSize: "0.85rem", border: "none", boxShadow: "none" }}
+                    onClick={() => setShowDropdown(false)}
+                  >
+                    <UserIcon style={{ width: 14, height: 14, marginRight: "8px" }} />
+                    Open Profile
+                  </Link>
+                  <button 
+                    onClick={() => { logout(); setShowDropdown(false); }} 
+                    className="neu-btn" 
+                    style={{ padding: "10px 14px", justifyContent: "flex-start", width: "100%", fontSize: "0.85rem", color: "var(--danger)", border: "none", boxShadow: "none" }}
+                  >
+                    <LogOut style={{ width: 14, height: 14, marginRight: "8px", color: "var(--danger)" }} />
+                    Logout
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <button

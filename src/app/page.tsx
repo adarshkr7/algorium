@@ -13,7 +13,6 @@ export default function HomePage() {
   const router = useRouter();
   const [roomCode, setRoomCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [profileData, setProfileData] = useState<any>(null);
 
   const handleJoinRoom = (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,21 +20,6 @@ export default function HomePage() {
     if (!user) { setError("Please sign in with your Codeforces handle first!"); return; }
     router.push(`/room/${roomCode.trim().toUpperCase()}`);
   };
-
-  React.useEffect(() => {
-    if (!user) return;
-    const handle = user.handle;
-    async function loadStats() {
-      try {
-        const res = await fetch(`/api/profile/${encodeURIComponent(handle)}`);
-        const data = await res.json();
-        if (res.ok) setProfileData(data);
-      } catch (err) {
-        console.error("Failed to load user dashboard stats:", err);
-      }
-    }
-    loadStats();
-  }, [user]);
 
   return (
     <div style={{ maxWidth: 1000, margin: "0 auto", display: "flex", flexDirection: "column", gap: 48 }}>
@@ -106,40 +90,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── User Dashboard Live Stats Bar (If signed in) ── */}
-      {user && profileData && (
-        <section className="animate-fade-in-up" style={{ maxWidth: 840, margin: "0 auto", width: "100%" }}>
-          <div className="neu-card" style={{ padding: "24px 32px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <img src={user.avatar} alt={user.handle} style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover" }} />
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: "1rem", color: "var(--text-primary)" }}>{user.handle}</div>
-                  <div className="neu-label font-mono" style={{ fontSize: "0.68rem" }}>{user.rank} • Rating: {user.rating}</div>
-                </div>
-              </div>
-              <Link href={`/profile/${encodeURIComponent(user.handle)}`} className="neu-btn" style={{ padding: "8px 16px", fontSize: "0.78rem" }}>
-                <span>View Full Profile</span>
-                <ArrowRight style={{ width: 14, height: 14 }} />
-              </Link>
-            </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
-              {[
-                { label: "Matches Played", value: profileData.stats.totalMatches, color: "var(--text-primary)" },
-                { label: "Victories (Wins)", value: profileData.stats.wins, color: "var(--success)" },
-                { label: "Defeats (Losses)", value: profileData.stats.losses, color: "var(--danger)" },
-                { label: "Win Rate", value: `${profileData.stats.winRate}%`, color: "var(--accent)" },
-              ].map((st) => (
-                <div key={st.label} className="neu-inset" style={{ padding: "14px 16px", textAlign: "center", borderRadius: "var(--r-md)" }}>
-                  <div className="neu-label" style={{ marginBottom: 4 }}>{st.label}</div>
-                  <div className="font-mono" style={{ fontSize: "1.4rem", fontWeight: 800, color: st.color }}>{st.value}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
 
       {/* ── Mode Cards ── */}
       <section className="stagger-children" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 28 }}>
