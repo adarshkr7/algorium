@@ -344,7 +344,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
           border: `1px solid ${isDraw ? "var(--border)" : "rgba(245,158,11,0.3)"}`,
           textAlign: "center",
         }}>
-          <div style={{ fontSize: "2rem", marginBottom: 6 }}>{isDraw ? "🤝" : "🏆"}</div>
           <div style={{ fontWeight: 800, fontSize: "1.3rem", color: isDraw ? "var(--text-primary)" : "var(--warning)" }}>
             {isDraw ? "It's a Draw!" : `${winnerHandle} Wins!`}
           </div>
