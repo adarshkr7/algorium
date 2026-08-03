@@ -3,7 +3,7 @@
 import React, { useEffect, useState, use } from "react";
 import Link from "next/link";
 import {
-  Trophy, Swords, CheckCircle2, XCircle, MinusCircle, ArrowLeft,
+  Trophy, Swords, CheckCircle2, XCircle, MinusCircle, ArrowLeft, ExternalLink,
 } from "lucide-react";
 
 export default function ProfilePage({ params }: { params: Promise<{ handle: string }> }) {
@@ -122,7 +122,7 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
             <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 8px" }}>
               <thead>
                 <tr>
-                  {["Result", "Opponent", "Mode", "Score", "Date"].map((h) => (
+                  {["Result", "Opponent", "Mode", "Score", "Date", ""].map((h) => (
                     <th key={h} className="neu-label" style={{ textAlign: "left", padding: "0 12px 8px", fontWeight: 700 }}>{h}</th>
                   ))}
                 </tr>
@@ -151,6 +151,19 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
                     </td>
                     <td style={{ padding: "10px 12px", color: "var(--text-muted)", fontSize: "0.78rem", fontFamily: "JetBrains Mono, monospace" }}>
                       {new Date(match.playedAt).toLocaleDateString()}
+                    </td>
+                    <td style={{ padding: "10px 12px" }}>
+                      {match.roomCode && (
+                        <Link
+                          href={`/arena/${match.roomCode}`}
+                          className="neu-btn"
+                          style={{ padding: "6px 12px", fontSize: "0.72rem", gap: 5, height: 30 }}
+                          title="Open contest page"
+                        >
+                          <ExternalLink style={{ width: 11, height: 11 }} />
+                          View
+                        </Link>
+                      )}
                     </td>
                   </tr>
                 ))}
