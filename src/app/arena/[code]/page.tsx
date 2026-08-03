@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, use } from "react";
+import React, { useEffect, useState, use, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import confetti from "canvas-confetti";
@@ -17,6 +17,8 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
   const { code: rawCode } = use(params);
   const code = rawCode.toUpperCase();
   const { user } = useUser();
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
   const router = useRouter();
 
   const [supabase] = useState(() => createClient());
@@ -37,6 +39,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
     let isMounted = true;
     let evalInterval: NodeJS.Timeout | null = null;
     let channel: any = null;
+    let retryTimeout: NodeJS.Timeout | null = null;
 
     async function loadArenaData() {
       try {
@@ -45,6 +48,9 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         if (!res.ok || !data.room || !data.room.contest) {
           if (res.status === 404) {
             router.push("/");
+          } else if (isMounted) {
+            // Retry after 2s if room isn't ready yet (e.g. just started)
+            retryTimeout = setTimeout(loadArenaData, 2000);
           }
           return;
         }
@@ -97,7 +103,8 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
 
               if (item.type === "SUBMISSION") {
                 const sub = item.action;
-                const isMe = user && sub.userId === user.id;
+                const currentUser = userRef.current;
+                const isMe = currentUser && sub.userId === currentUser.id;
                 const solverName = isMe ? "You" : sub.user?.handle || "Opponent";
                 if (sub.verdict === "OK") {
                   setNotification(`🎉 ${solverName} solved ${sub.problem?.name || "a problem"}!`);
@@ -139,7 +146,8 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
             if (isMounted) {
               setIsFinished(true);
               setWinnerInfo(payload.payload);
-              if (user && payload.payload.winnerId === user.id) {
+              const currentUser = userRef.current;
+              if (currentUser && payload.payload.winnerId === currentUser.id) {
                 confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
               }
             }
@@ -163,7 +171,8 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                   setIsFinished(true);
                   if (evalData.winnerInfo) {
                     setWinnerInfo(evalData.winnerInfo);
-                    if (user && evalData.winnerInfo.winnerId === user.id) {
+                    const currentUser = userRef.current;
+                    if (currentUser && evalData.winnerInfo.winnerId === currentUser.id) {
                       confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
                     }
                   }
@@ -176,6 +185,10 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         }
       } catch (err) {
         console.error("Arena init error:", err);
+        // Retry on unexpected errors
+        if (isMounted) {
+          retryTimeout = setTimeout(loadArenaData, 2000);
+        }
       }
     }
 
@@ -184,9 +197,11 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
     return () => {
       isMounted = false;
       if (evalInterval) clearInterval(evalInterval);
+      if (retryTimeout) clearTimeout(retryTimeout);
       if (channel) supabase.removeChannel(channel);
     };
-  }, [code, user, router, supabase]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, router, supabase]); // Intentionally omit `user` — using userRef to avoid re-mounting on auth change
 
   useEffect(() => {
     if (isFinished || remainingSeconds <= 0) return;
