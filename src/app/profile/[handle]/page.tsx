@@ -3,12 +3,14 @@
 import React, { useEffect, useState, use } from "react";
 import Link from "next/link";
 import {
-  Trophy, Swords, CheckCircle2, XCircle, MinusCircle, ArrowLeft, ExternalLink,
+  Trophy, Swords, CheckCircle2, XCircle, MinusCircle, ArrowLeft, ExternalLink, KeyRound
 } from "lucide-react";
+import { useUser } from "@/context/UserContext";
 
 export default function ProfilePage({ params }: { params: Promise<{ handle: string }> }) {
   const { handle: rawHandle } = use(params);
   const handle = decodeURIComponent(rawHandle);
+  const { user: currentUser } = useUser();
 
   const [profileData, setProfileData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -61,8 +63,9 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
     <div className="stagger-children" style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
 
       {/* Profile banner */}
-      <div className="neu-card-lg" style={{ padding: "36px 40px", display: "flex", flexDirection: "row", alignItems: "center", gap: 28, flexWrap: "wrap" }}>
-        <div style={{ position: "relative", flexShrink: 0 }}>
+      <div className="neu-card-lg" style={{ padding: "36px 40px", display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 28, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
+          <div style={{ position: "relative", flexShrink: 0 }}>
           <img
             src={user.avatar} alt={user.handle}
             style={{ width: 96, height: 96, borderRadius: "var(--r-lg)", objectFit: "cover", boxShadow: "var(--neu-shadow)" }}
@@ -89,7 +92,15 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
             <span>Rating: <strong style={{ color: "var(--success)" }}>{user.rating}</strong></span>
             <span>Max: <strong style={{ color: "var(--warning)" }}>{user.maxRating}</strong></span>
           </div>
+          </div>
         </div>
+
+        {currentUser && currentUser.handle === user.handle && (
+          <Link href="/change-pass" className="neu-btn" style={{ padding: "10px 18px", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 8 }}>
+            <KeyRound style={{ width: 16, height: 16, color: "var(--accent)" }} />
+            <span>Change Password</span>
+          </Link>
+        )}
       </div>
 
       {/* Stats grid */}

@@ -431,7 +431,7 @@ export const Navbar: React.FC = () => {
                   <div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                       <label className="neu-label" style={{ display: "block" }}>Password</label>
-                      <button type="button" onClick={() => handleInitiate(undefined as any, true)} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: "0.75rem", cursor: "pointer", textDecoration: "underline" }}>
+                      <button type="button" onClick={() => { router.push("/change-pass"); closeModal(); }} style={{ background: "none", border: "none", color: "var(--accent)", fontSize: "0.75rem", cursor: "pointer", textDecoration: "underline" }}>
                         Forgot Password?
                       </button>
                     </div>

@@ -135,3 +135,12 @@ model MatchHistory {
 
   user           User     @relation(fields: [userId], references: [id])
 }
+
+model ContactMessage {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  createdAt DateTime @default(now())
+}
