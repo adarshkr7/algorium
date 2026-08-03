@@ -30,19 +30,36 @@ export const Navbar: React.FC = () => {
 
   // Profile search
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchFocused, setSearchFocused] = useState(false);
-  const searchRef = useRef<HTMLFormElement>(null);
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Close search on outside click
+  // Close search on outside click or Escape
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setSearchFocused(false);
+        setSearchExpanded(false);
+        setSearchQuery("");
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSearchExpanded(false);
+        setSearchQuery("");
       }
     };
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
   }, []);
+
+  const openSearch = () => {
+    setSearchExpanded(true);
+    setTimeout(() => searchInputRef.current?.focus(), 50);
+  };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -153,86 +170,105 @@ export const Navbar: React.FC = () => {
           </span>
         </Link>
 
-        {/* Center: Profile Search */}
-        <form
-          ref={searchRef}
-          onSubmit={handleSearch}
-          style={{
-            position: "relative",
-            flex: 1,
-            maxWidth: 340,
-            margin: "0 auto",
-          }}
-        >
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: searchFocused ? "var(--bg-hover)" : "var(--bg-subtle)",
-            border: `1px solid ${searchFocused ? "var(--border-hover)" : "var(--border)"}`,
-            borderRadius: "var(--r-pill)",
-            padding: "0 14px",
-            height: 38,
-            transition: "all var(--t-fast)",
-            boxShadow: searchFocused ? "0 0 0 3px rgba(250,250,250,0.06)" : "none",
-          }}>
-            <Search style={{ width: 14, height: 14, color: searchFocused ? "var(--text-secondary)" : "var(--text-muted)", flexShrink: 0, transition: "color var(--t-fast)" }} />
-            <input
-              type="text"
-              placeholder="Search player profile..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => setSearchFocused(true)}
-              style={{
-                flex: 1,
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                color: "var(--text-primary)",
-                fontSize: "0.82rem",
-                fontFamily: "inherit",
-              }}
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center" }}
-              >
-                <X style={{ width: 13, height: 13, color: "var(--text-muted)" }} />
-              </button>
-            )}
-          </div>
-          {/* Hint on focus */}
-          {searchFocused && searchQuery.trim() && (
+        {/* Right side: Search icon + Auth */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0, marginLeft: "auto" }}>
+
+
+          {/* Collapsible search */}
+          <div ref={searchRef} style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            {/* Animated search bar */}
             <div style={{
-              position: "absolute",
-              top: "calc(100% + 6px)",
-              left: 0, right: 0,
-              background: "var(--bg-subtle)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-md)",
-              padding: "10px 14px",
-              fontSize: "0.8rem",
-              color: "var(--text-secondary)",
-              boxShadow: "var(--shadow-md)",
               display: "flex",
               alignItems: "center",
-              gap: 8,
-              cursor: "pointer",
-              zIndex: 60,
-            }}
-              onClick={handleSearch as any}
-            >
-              <Search style={{ width: 13, height: 13, color: "var(--text-muted)" }} />
-              View profile of <strong style={{ color: "var(--text-primary)" }}>{searchQuery.trim()}</strong>
-              <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace" }}>↵ Enter</span>
+              overflow: "hidden",
+              width: searchExpanded ? 240 : 0,
+              opacity: searchExpanded ? 1 : 0,
+              transition: "width 0.25s cubic-bezier(0.2,0.8,0.2,1), opacity 0.2s ease",
+              marginRight: searchExpanded ? 6 : 0,
+            }}>
+              <form onSubmit={handleSearch} style={{ width: "100%" }}>
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "var(--bg-hover)",
+                  border: "1px solid var(--border-hover)",
+                  borderRadius: "var(--r-pill)",
+                  padding: "0 14px",
+                  height: 38,
+                  boxShadow: "0 0 0 3px rgba(250,250,250,0.05)",
+                }}>
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    placeholder="Search player..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{
+                      flex: 1,
+                      background: "transparent",
+                      border: "none",
+                      outline: "none",
+                      color: "var(--text-primary)",
+                      fontSize: "0.82rem",
+                      fontFamily: "inherit",
+                      minWidth: 0,
+                    }}
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", alignItems: "center" }}
+                    >
+                      <X style={{ width: 13, height: 13, color: "var(--text-muted)" }} />
+                    </button>
+                  )}
+                </div>
+              </form>
             </div>
-          )}
-        </form>
 
-        {/* Right: Auth */}
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+            {/* Search icon button */}
+            <button
+              onClick={searchExpanded ? handleSearch as any : openSearch}
+              className="neu-btn"
+              style={{ padding: "10px", borderRadius: "50%" }}
+              title="Search player profile"
+            >
+              <Search style={{ width: 16, height: 16 }} />
+            </button>
+
+            {/* Dropdown hint */}
+            {searchExpanded && searchQuery.trim() && (
+              <div
+                onClick={handleSearch as any}
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 8px)",
+                  right: 0,
+                  minWidth: 260,
+                  background: "var(--bg-subtle)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--r-md)",
+                  padding: "10px 14px",
+                  fontSize: "0.8rem",
+                  color: "var(--text-secondary)",
+                  boxShadow: "var(--shadow-md)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  cursor: "pointer",
+                  zIndex: 60,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <Search style={{ width: 13, height: 13, color: "var(--text-muted)", flexShrink: 0 }} />
+                View profile of <strong style={{ color: "var(--text-primary)" }}>{searchQuery.trim()}</strong>
+                <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace" }}>↵</span>
+              </div>
+            )}
+          </div>
+
           {user ? (
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <Link
