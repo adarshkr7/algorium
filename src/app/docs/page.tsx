@@ -112,7 +112,7 @@ export default function DocsPage() {
               <li style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                 <CheckCircle2 style={{ width: 20, height: 20, color: "var(--success)", flexShrink: 0, marginTop: 2 }} />
                 <div>
-                  <strong style={{ color: "#FFF" }}>No Cap:</strong>
+                  <strong style={{ color: "#FFF" }}>To Start:</strong>
                   <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.5 }}>
                     Click "Sign In with CF" in the top right. We use a compilation error verification method to get the receipts and securely prove you actually own the handle. Fr fr.
                   </p>
