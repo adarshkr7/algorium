@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { generateContest, generateRoomCode } from "@/lib/contest-generator";
+import { requireAuth, isErrorResponse, apiError, apiSuccess } from "@/lib/api-utils";
 
 export async function POST(req: Request) {
   try {
+    const sessionOrError = await requireAuth(req);
+    if (isErrorResponse(sessionOrError)) return sessionOrError;
+    const session = sessionOrError;
+
     const body = await req.json();
     const {
       hostId,
@@ -23,10 +28,11 @@ export async function POST(req: Request) {
     } = body;
 
     if (!hostId || !hostHandle || !name || !mode) {
-      return NextResponse.json(
-        { error: "Missing required fields (hostId, hostHandle, name, mode)" },
-        { status: 400 }
-      );
+      return apiError("Missing required fields (hostId, hostHandle, name, mode)", 400);
+    }
+
+    if (session.userId !== hostId) {
+      return apiError("Unauthorized: hostId does not match session", 403);
     }
 
     const actualMinRating = ratings && ratings.length > 0 ? Math.min(...ratings) : Number(minRating);
@@ -56,18 +62,21 @@ export async function POST(req: Request) {
     });
 
     if (activeRoom) {
-      return NextResponse.json(
-        { error: "You are already in an active room. Please leave it first." },
-        { status: 400 }
-      );
+      return apiError("You are already in an active room. Please leave it first.", 400);
     }
 
     // 1. Generate unique 6-character room code
     let code = generateRoomCode();
     let existing = await prisma.room.findUnique({ where: { code } });
-    while (existing) {
+    let retries = 0;
+    while (existing && retries < 10) {
       code = generateRoomCode();
       existing = await prisma.room.findUnique({ where: { code } });
+      retries++;
+    }
+
+    if (existing) {
+      return apiError("Failed to generate unique room code. Please try again.", 500);
     }
 
     // 2. Generate problem set
@@ -86,10 +95,7 @@ export async function POST(req: Request) {
     });
 
     if (generatedProblems.length === 0) {
-      return NextResponse.json(
-        { error: "Could not find suitable problems matching criteria." },
-        { status: 400 }
-      );
+      return apiError("Could not find suitable problems matching criteria.", 400);
     }
 
     const isSupervised = hostingType === "SUPERVISED";
@@ -112,8 +118,8 @@ export async function POST(req: Request) {
             durationMinutes: Number(durationMinutes),
             minRating: actualMinRating,
             maxRating: actualMaxRating,
-            allowedTags: JSON.stringify(allowedTags),
-            excludedTags: JSON.stringify(excludedTags),
+            allowedTags: Array.isArray(allowedTags) ? allowedTags : [],
+            excludedTags: Array.isArray(excludedTags) ? excludedTags : [],
             seed: seed || code,
             status: "NOT_STARTED",
             problems: {
@@ -121,7 +127,7 @@ export async function POST(req: Request) {
                 problemKey: p.problemKey,
                 name: p.name,
                 rating: p.rating,
-                tags: JSON.stringify(p.tags),
+                tags: p.tags,
                 indexInContest: p.indexInContest,
               })),
             },
@@ -150,9 +156,9 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({ room });
+    return apiSuccess({ room }, 201);
   } catch (error) {
     console.error("Create contest API error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return apiError("Internal server error", 500);
   }
 }

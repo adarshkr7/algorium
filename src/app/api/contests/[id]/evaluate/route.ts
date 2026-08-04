@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createClient } from "@supabase/supabase-js";
-
-// Initialize Supabase client for broadcasting events
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
-);
+import { requireAuth, isErrorResponse, apiError, apiSuccess } from "@/lib/api-utils";
+import { finishContest } from "@/lib/services/contest-finalizer";
+import { BroadcastService } from "@/lib/services/broadcast";
+import { calculateStandings } from "@/lib/services/standings";
+import { processUserSubs } from "@/lib/services/submission-processor";
+import { rateLimit } from "@/lib/rate-limit";
 
 // Helper: Fetch Codeforces user submissions
 async function fetchCFSubmissions(userHandle: string, count = 200) {
@@ -25,79 +24,23 @@ async function fetchCFSubmissions(userHandle: string, count = 200) {
   return [];
 }
 
-// Standings calculator (host = p1, guest = p2)
-function calculateStandings(contest: any, p1: any, p2: any) {
-  const subs = contest.submissions || [];
-  const problems = contest.problems || [];
-
-  function getPlayerStats(userId: string | null) {
-    if (!userId) return { userId: null, acceptedCount: 0, penaltyMinutes: 0, lockedWon: 0, wrongSubsBeforeAC: 0, lastACTime: 0, points: 0, hasResigned: false };
-    let acceptedCount = 0;
-    let penaltyMinutes = 0;
-    let lockedWon = 0;
-    let wrongSubsBeforeAC = 0;
-    let lastACTime = 0;
-    let points = 0;
-
-    for (const prob of problems) {
-      const userProbSubs = subs
-        .filter((s: any) => s.userId === userId && s.problemId === prob.id)
-        .sort((a: any, b: any) => new Date(a.timeSubmitted).getTime() - new Date(b.timeSubmitted).getTime());
-
-      const acSub = userProbSubs.find((s: any) => s.verdict === "OK");
-
-      if (acSub) {
-        acceptedCount++;
-        if ((acSub.solveTimeSeconds || 0) > lastACTime) {
-          lastACTime = acSub.solveTimeSeconds || 0;
-        }
-
-        const wrongBefore = userProbSubs.filter(
-          (s: any) => new Date(s.timeSubmitted).getTime() < new Date(acSub.timeSubmitted).getTime() && s.verdict !== "OK"
-        ).length;
-
-        wrongSubsBeforeAC += wrongBefore;
-        const solveTimeMin = Math.floor((acSub.solveTimeSeconds || 0) / 60);
-        penaltyMinutes += solveTimeMin + wrongBefore * 20;
-      }
-
-      if ((contest.mode === "LOCKOUT" || contest.mode === "BLITZ") && prob.lockedWinnerId === userId) {
-        lockedWon++;
-      }
-      
-      if (contest.pointingSystem === "POINTS") {
-        const probPoints = (prob.indexInContest + 1) * 100;
-        if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
-          if (prob.lockedWinnerId === userId) points += probPoints;
-        } else {
-          if (acSub) points += probPoints;
-        }
-      }
-    }
-
-    const participant = contest.participants?.find((p: any) => p.userId === userId);
-    const hasResigned = participant?.hasResigned || false;
-
-    return { userId, acceptedCount, penaltyMinutes, lockedWon, wrongSubsBeforeAC, lastACTime, points, hasResigned };
-  }
-
-  const p1Stats = getPlayerStats(p1?.id);
-  const p2Stats = getPlayerStats(p2?.id);
-
-  return {
-    host: { ...p1Stats, user: p1 },
-    guest: { ...p2Stats, user: p2 },
-  };
-}
-
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const rl = rateLimit(req as any, 30, 60 * 1000);
+    if (!rl.success) {
+      return apiError("Too many evaluate requests. Please slow down.", 429);
+    }
+
+    const sessionOrError = await requireAuth(req);
+    if (isErrorResponse(sessionOrError)) return sessionOrError;
+    const session = sessionOrError;
+
     const { id: contestId } = await params;
     
-    // Using a transaction-like approach or single fetches
+    // Initial fetch of contest state
     const contest = await prisma.contest.findUnique({
       where: { id: contestId },
       include: {
@@ -109,7 +52,13 @@ export async function POST(
     });
 
     if (!contest || contest.status === "FINISHED" || !contest.startTime) {
-      return NextResponse.json({ status: "FINISHED_OR_INVALID" });
+      return apiSuccess({ status: "FINISHED_OR_INVALID" });
+    }
+
+    // Verify participant is authorized to evaluate
+    const isParticipant = contest.participants.some(p => p.userId === session.userId) || contest.room.hostId === session.userId;
+    if (!isParticipant) {
+      return apiError("Unauthorized: You are not a participant of this contest", 403);
     }
 
     const startTime = new Date(contest.startTime);
@@ -120,17 +69,16 @@ export async function POST(
 
     // Check timer expiration
     if (now >= endTime) {
-      await finishContest(contest, roomCode);
-      return NextResponse.json({ status: "FINISHED" });
+      await finishContest(contest.id);
+      return apiSuccess({ status: "FINISHED" });
     }
 
     const player1 = contest.room.player1 || contest.room.host;
     const player2 = contest.room.player2 || contest.room.guest;
     if (!player1 || !player2) {
-       return NextResponse.json({ status: "WAITING_FOR_PLAYERS" });
+       return apiSuccess({ status: "WAITING_FOR_PLAYERS" });
     }
 
-    // Map existing submissions by cfSubmissionId -> submission object
     const existingSubsMap = new Map<number, any>(
       contest.submissions.map((s) => [Number(s.cfSubmissionId), s])
     );
@@ -140,150 +88,13 @@ export async function POST(
       fetchCFSubmissions(player2.handle),
     ]);
 
+    const broadcaster = new BroadcastService(roomCode);
+    
     let newSubmissionsCount = 0;
-    const channel = supabase.channel(`room-${roomCode}`);
+    newSubmissionsCount += await processUserSubs(player1, p1Subs, contest, existingSubsMap, broadcaster);
+    newSubmissionsCount += await processUserSubs(player2, p2Subs, contest, existingSubsMap, broadcaster);
 
-    // Process submissions for a given user
-    async function processUserSubs(user: any, subs: any[]) {
-      if (!user || !subs) return;
-      for (const sub of subs) {
-        if (!sub.id) continue;
-
-        const subTime = new Date(sub.creationTimeSeconds * 1000);
-        if (subTime < startTime || subTime > endTime) continue;
-
-        if (!sub.problem || !sub.problem.contestId || !sub.problem.index) continue;
-        const formattedIndex = String(sub.problem.index).trim().toUpperCase();
-        const key = `${sub.problem.contestId}-${formattedIndex}`;
-        const targetProblem = contest!.problems.find((p) => p.problemKey === key);
-
-        if (!targetProblem) continue;
-
-        const solveTimeSec = Math.max(0, Math.floor((subTime.getTime() - startTime.getTime()) / 1000));
-        const subVerdict = sub.verdict || "TESTING";
-
-        const existingSub = existingSubsMap.get(sub.id);
-
-        if (existingSub) {
-          // If the submission is currently TESTING in DB, but CF has a finalized/updated verdict
-          if (existingSub.verdict === "TESTING" && subVerdict !== "TESTING") {
-            const updatedSub = await prisma.submission.update({
-              where: { id: existingSub.id },
-              data: {
-                verdict: subVerdict,
-                passedTestCount: sub.passedTestCount || 0,
-                solveTimeSeconds: subVerdict === "OK" ? solveTimeSec : null,
-              },
-              include: { user: true, problem: true },
-            });
-
-            existingSubsMap.set(sub.id, updatedSub);
-            newSubmissionsCount++;
-
-            // Broadcast updated submission
-            await channel.send({
-              type: 'broadcast',
-              event: 'new-recent-action',
-              payload: {
-                type: "SUBMISSION",
-                action: { ...updatedSub, cfSubmissionId: updatedSub.cfSubmissionId.toString() },
-              },
-            });
-
-            // Lockout / Blitz Mode Lock Logic
-            if ((contest!.mode === "LOCKOUT" || contest!.mode === "BLITZ") && subVerdict === "OK") {
-              const currentUnlocked = contest!.mode === "BLITZ" ? contest!.problems.find((p) => !p.lockedWinnerId) : null;
-              
-              const canLock = contest!.mode === "BLITZ" 
-                ? (currentUnlocked && currentUnlocked.id === targetProblem.id)
-                : !targetProblem.lockedWinnerId;
-
-              if (canLock) {
-                await prisma.problem.update({
-                  where: { id: targetProblem.id },
-                  data: { lockedWinnerId: user.id },
-                });
-                targetProblem.lockedWinnerId = user.id;
-
-                await channel.send({
-                  type: 'broadcast',
-                  event: contest!.mode === "BLITZ" ? 'strict-blitz-problem-locked' : 'blitz-problem-locked',
-                  payload: {
-                    lockedProblemId: targetProblem.id,
-                    winnerHandle: user.handle,
-                    winnerId: user.id,
-                    nextIndex: targetProblem.indexInContest + 1,
-                  },
-                });
-              }
-            }
-          }
-          // Already recorded and verdict hasn't changed from a final verdict
-          continue;
-        }
-
-        // Save brand new submission
-        const createdSub = await prisma.submission.create({
-          data: {
-            contestId: contest!.id,
-            problemId: targetProblem.id,
-            userId: user.id,
-            cfSubmissionId: BigInt(sub.id),
-            verdict: subVerdict,
-            passedTestCount: sub.passedTestCount || 0,
-            timeSubmitted: subTime,
-            solveTimeSeconds: subVerdict === "OK" ? solveTimeSec : null,
-          },
-          include: { user: true, problem: true },
-        });
-
-        existingSubsMap.set(sub.id, createdSub);
-        newSubmissionsCount++;
-
-        // Broadcast to Supabase
-        await channel.send({
-          type: 'broadcast',
-          event: 'new-recent-action',
-          payload: {
-            type: "SUBMISSION",
-            action: { ...createdSub, cfSubmissionId: createdSub.cfSubmissionId.toString() },
-          },
-        });
-
-        // Lockout / Blitz Mode Lock Logic
-        if ((contest!.mode === "LOCKOUT" || contest!.mode === "BLITZ") && subVerdict === "OK") {
-          const currentUnlocked = contest!.mode === "BLITZ" ? contest!.problems.find((p) => !p.lockedWinnerId) : null;
-          
-          const canLock = contest!.mode === "BLITZ" 
-            ? (currentUnlocked && currentUnlocked.id === targetProblem.id)
-            : !targetProblem.lockedWinnerId;
-
-          if (canLock) {
-            await prisma.problem.update({
-              where: { id: targetProblem.id },
-              data: { lockedWinnerId: user.id },
-            });
-            targetProblem.lockedWinnerId = user.id;
-
-            await channel.send({
-              type: 'broadcast',
-              event: contest!.mode === "BLITZ" ? 'strict-blitz-problem-locked' : 'blitz-problem-locked',
-              payload: {
-                lockedProblemId: targetProblem.id,
-                winnerHandle: user.handle,
-                winnerId: user.id,
-                nextIndex: targetProblem.indexInContest + 1,
-              },
-            });
-          }
-        }
-      }
-    }
-
-    await processUserSubs(player1, p1Subs);
-    await processUserSubs(player2, p2Subs);
-
-    // Fetch latest state to return to polling client
+    // Fetch latest state to return to polling client and finalize if necessary
     const updatedContest = await prisma.contest.findUnique({
       where: { id: contest.id },
       include: {
@@ -294,40 +105,46 @@ export async function POST(
       },
     });
 
+    if (!updatedContest) return apiError("Contest not found", 404);
+
     const standings = calculateStandings(updatedContest, player1, player2);
 
-    if (updatedContest!.mode === "LOCKOUT" || updatedContest!.mode === "BLITZ") {
-      const allLocked = updatedContest!.problems.every((p) => p.lockedWinnerId !== null);
-      if (allLocked) await finishContest(updatedContest, roomCode);
-    } else if (updatedContest!.mode === "CLASSIC") {
-      // Keep the classic win condition aligned with the latest contest snapshot.
+    let shouldFinish = false;
+    if (updatedContest.mode === "LOCKOUT" || updatedContest.mode === "BLITZ") {
+      const allLocked = updatedContest.problems.every((p) => p.lockedWinnerId !== null);
+      if (allLocked) shouldFinish = true;
+    } else if (updatedContest.mode === "CLASSIC") {
       const p1AC = standings.host.acceptedCount;
       const p2AC = standings.guest.acceptedCount;
-      const total = updatedContest!.problems.length;
-      if (p1AC === total && p2AC === total) await finishContest(updatedContest, roomCode);
+      const total = updatedContest.problems.length;
+      if (p1AC === total && p2AC === total) shouldFinish = true;
     }
 
-    // Check if both users have resigned
     if (standings.host.hasResigned && standings.guest.hasResigned) {
-      await finishContest(updatedContest, roomCode);
+      shouldFinish = true;
     }
 
-    if (newSubmissionsCount > 0) {
-      await channel.send({
-        type: 'broadcast',
-        event: 'scoreboard-update',
-        payload: { standings },
-      });
+    let finalStandings = standings;
+    let winnerInfo = null;
 
-      await channel.send({
-        type: 'broadcast',
-        event: 'problems-update',
-        payload: { problems: updatedContest!.problems },
-      });
+    if (shouldFinish) {
+      const finishResult = await finishContest(updatedContest.id);
+      if (finishResult) {
+        finalStandings = finishResult.standings;
+        winnerInfo = {
+          winnerId: finishResult.winnerId,
+          isDraw: finishResult.isDraw,
+          winnerHandle: finishResult.winnerId === player1.id ? player1.handle : finishResult.winnerId === player2.id ? player2.handle : null,
+          standings: finishResult.standings,
+        };
+      }
+    } else if (newSubmissionsCount > 0) {
+      await broadcaster.broadcastScoreboardUpdate(standings);
+      await broadcaster.broadcastProblemsUpdate(updatedContest.problems);
     }
 
-    // Refetch in case status was updated by finishContest
-    const finalContestState = await prisma.contest.findUnique({
+    // Refetch the absolute final state one last time if we just finished it
+    const finalContestState = shouldFinish ? await prisma.contest.findUnique({
       where: { id: contest.id },
       include: {
         room: { include: { host: true, guest: true, player1: true, player2: true } },
@@ -335,46 +152,9 @@ export async function POST(
         participants: { include: { user: true } },
         submissions: { include: { user: true, problem: true }, orderBy: { timeSubmitted: "desc" } },
       },
-    });
+    }) : updatedContest;
 
-    const finalStandings = calculateStandings(finalContestState, player1, player2);
-    let winnerInfo = null;
-
-    if (finalContestState?.status === "FINISHED") {
-      const p1 = finalContestState.room.player1 || finalContestState.room.host;
-      const p2 = finalContestState.room.player2 || finalContestState.room.guest;
-      const p1S = finalStandings.host;
-      const p2S = finalStandings.guest;
-      let winnerId = null;
-
-      if (finalContestState.pointingSystem === "POINTS") {
-        if (p1S.points > p2S.points) winnerId = p1?.id;
-        else if (p2S.points > p1S.points) winnerId = p2?.id;
-        else {
-          if (p1S.penaltyMinutes < p2S.penaltyMinutes) winnerId = p1?.id;
-          else if (p2S.penaltyMinutes < p1S.penaltyMinutes) winnerId = p2?.id;
-        }
-      } else if (finalContestState.mode === "LOCKOUT" || finalContestState.mode === "BLITZ") {
-        if (p1S.lockedWon > p2S.lockedWon) winnerId = p1?.id;
-        else if (p2S.lockedWon > p1S.lockedWon) winnerId = p2?.id;
-      } else {
-        if (p1S.acceptedCount > p2S.acceptedCount) winnerId = p1?.id;
-        else if (p2S.acceptedCount > p1S.acceptedCount) winnerId = p2?.id;
-        else {
-          if (p1S.penaltyMinutes < p2S.penaltyMinutes) winnerId = p1?.id;
-          else if (p2S.penaltyMinutes < p1S.penaltyMinutes) winnerId = p2?.id;
-        }
-      }
-
-      winnerInfo = {
-        winnerId,
-        isDraw: winnerId === null,
-        winnerHandle: winnerId === p1?.id ? p1?.handle : winnerId === p2?.id ? p2?.handle : null,
-        standings: finalStandings,
-      };
-    }
-
-    return NextResponse.json({
+    return apiSuccess({
       status: "OK",
       newSubmissions: newSubmissionsCount > 0,
       standings: finalStandings,
@@ -385,112 +165,6 @@ export async function POST(
     });
   } catch (error: any) {
     console.error("Evaluate API Error:", error);
-    return NextResponse.json({ error: error?.message || "Internal server error" }, { status: 500 });
+    return apiError("Internal server error", 500);
   }
-}
-
-async function finishContest(contest: any, roomCode: string) {
-  const existing = await prisma.contest.findUnique({ where: { id: contest.id }, select: { status: true } });
-  if (!existing || existing.status === "FINISHED") return;
-
-  const player1 = contest.room.player1 || contest.room.host;
-  const player2 = contest.room.player2 || contest.room.guest;
-  if (!player1 || !player2) return;
-
-  const standings = calculateStandings(contest, player1, player2);
-  const p1S = standings.host;
-  const p2S = standings.guest;
-
-  let winnerId = null;
-
-  if (contest.pointingSystem === "POINTS") {
-    if (p1S.points > p2S.points) winnerId = player1.id;
-    else if (p2S.points > p1S.points) winnerId = player2.id;
-    else {
-      if (p1S.penaltyMinutes < p2S.penaltyMinutes) winnerId = player1.id;
-      else if (p2S.penaltyMinutes < p1S.penaltyMinutes) winnerId = player2.id;
-      else {
-        if (p1S.lastACTime > 0 && (p2S.lastACTime === 0 || p1S.lastACTime < p2S.lastACTime)) winnerId = player1.id;
-        else if (p2S.lastACTime > 0 && (p1S.lastACTime === 0 || p2S.lastACTime < p1S.lastACTime)) winnerId = player2.id;
-      }
-    }
-  } else if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
-    if (p1S.lockedWon > p2S.lockedWon) winnerId = player1.id;
-    else if (p2S.lockedWon > p1S.lockedWon) winnerId = player2.id;
-    else {
-      if (p1S.wrongSubsBeforeAC < p2S.wrongSubsBeforeAC) winnerId = player1.id;
-      else if (p2S.wrongSubsBeforeAC < p1S.wrongSubsBeforeAC) winnerId = player2.id;
-      else {
-        if (p1S.lastACTime > 0 && (p2S.lastACTime === 0 || p1S.lastACTime < p2S.lastACTime)) winnerId = player1.id;
-        else if (p2S.lastACTime > 0 && (p1S.lastACTime === 0 || p2S.lastACTime < p1S.lastACTime)) winnerId = player2.id;
-      }
-    }
-  } else {
-    // CLASSIC
-    if (p1S.acceptedCount > p2S.acceptedCount) winnerId = player1.id;
-    else if (p2S.acceptedCount > p1S.acceptedCount) winnerId = player2.id;
-    else {
-      if (p1S.penaltyMinutes < p2S.penaltyMinutes) winnerId = player1.id;
-      else if (p2S.penaltyMinutes < p1S.penaltyMinutes) winnerId = player2.id;
-      else {
-        if (p1S.lastACTime > 0 && (p2S.lastACTime === 0 || p1S.lastACTime < p2S.lastACTime)) winnerId = player1.id;
-        else if (p2S.lastACTime > 0 && (p1S.lastACTime === 0 || p2S.lastACTime < p1S.lastACTime)) winnerId = player2.id;
-      }
-    }
-  }
-
-  await prisma.contest.update({
-    where: { id: contest.id },
-    data: { status: "FINISHED", endTime: new Date() },
-  });
-
-  await prisma.room.update({
-    where: { id: contest.room.id },
-    data: { status: "FINISHED" },
-  });
-
-  const isDraw = winnerId === null;
-
-  const getScore = (s: any) => contest.pointingSystem === "POINTS" ? s.points : ((contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? s.lockedWon : s.acceptedCount);
-
-  await prisma.participant.updateMany({
-    where: { contestId: contest.id, userId: player1.id },
-    data: { score: getScore(p1S), penalty: p1S.penaltyMinutes, acceptedCount: p1S.acceptedCount, isWinner: winnerId === player1.id },
-  });
-
-  await prisma.participant.updateMany({
-    where: { contestId: contest.id, userId: player2.id },
-    data: { score: getScore(p2S), penalty: p2S.penaltyMinutes, acceptedCount: p2S.acceptedCount, isWinner: winnerId === player2.id },
-  });
-
-  if (isDraw) {
-    await prisma.user.update({ where: { id: player1.id }, data: { draws: { increment: 1 } } });
-    await prisma.user.update({ where: { id: player2.id }, data: { draws: { increment: 1 } } });
-  } else {
-    const loserId = winnerId === player1.id ? player2.id : player1.id;
-    await prisma.user.update({ where: { id: winnerId }, data: { wins: { increment: 1 } } });
-    await prisma.user.update({ where: { id: loserId }, data: { losses: { increment: 1 } } });
-  }
-
-  const duration = Math.floor((new Date().getTime() - new Date(contest.startTime).getTime()) / 1000);
-
-  await prisma.matchHistory.create({
-    data: { userId: player1.id, roomCode: contest.room.code, opponentHandle: player2.handle, mode: contest.mode, result: isDraw ? "DRAW" : winnerId === player1.id ? "WIN" : "LOSS", userScore: getScore(p1S), opponentScore: getScore(p2S), duration },
-  });
-
-  await prisma.matchHistory.create({
-    data: { userId: player2.id, roomCode: contest.room.code, opponentHandle: player1.handle, mode: contest.mode, result: isDraw ? "DRAW" : winnerId === player2.id ? "WIN" : "LOSS", userScore: getScore(p2S), opponentScore: getScore(p1S), duration },
-  });
-
-  const channel = supabase.channel(`room-${roomCode}`);
-  await channel.send({
-    type: 'broadcast',
-    event: 'contest-finished',
-    payload: {
-      winnerId,
-      isDraw,
-      winnerHandle: winnerId === player1.id ? player1.handle : winnerId === player2.id ? player2.handle : null,
-      standings,
-    }
-  });
 }

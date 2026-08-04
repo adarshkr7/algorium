@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import nodemailer from "nodemailer";
+import { apiError, apiSuccess } from "@/lib/api-utils";
+import { rateLimit } from "@/lib/rate-limit";
+import crypto from "crypto";
 
 export async function POST(req: Request) {
   try {
+    const rl = rateLimit(req as any, 3, 60 * 1000); // 3 OTP requests per minute
+    if (!rl.success) {
+      return apiError("Too many OTP requests. Please try again later.", 429);
+    }
+
     const { handleOrEmail } = await req.json();
 
     if (!handleOrEmail) {
-      return NextResponse.json({ error: "Handle or email is required" }, { status: 400 });
+      return apiError("Handle or email is required", 400);
     }
 
     // Find the user by handle or email
@@ -21,15 +29,15 @@ export async function POST(req: Request) {
     });
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return apiError("User not found", 404);
     }
 
     if (!user.email) {
-      return NextResponse.json({ error: "No email associated with this account" }, { status: 400 });
+      return apiError("No email associated with this account", 400);
     }
 
-    // Generate a 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate a 6-digit OTP using crypto
+    const otp = crypto.randomInt(100000, 1000000).toString();
 
     // Set expiry to 10 minutes from now
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -73,9 +81,9 @@ export async function POST(req: Request) {
 
     await transporter.sendMail(mailOptions);
 
-    return NextResponse.json({ success: true, message: "OTP sent successfully" }, { status: 200 });
+    return apiSuccess({ success: true, message: "OTP sent successfully" }, 200);
   } catch (error: any) {
     console.error("Error sending OTP:", error);
-    return NextResponse.json({ error: "Failed to send OTP", details: error.message }, { status: 500 });
+    return apiError("Failed to send OTP", 500);
   }
 }

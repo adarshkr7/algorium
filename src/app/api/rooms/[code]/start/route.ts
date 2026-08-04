@@ -1,16 +1,25 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, isErrorResponse, apiError, apiSuccess } from "@/lib/api-utils";
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ code: string }> }
 ) {
   try {
+    const sessionOrError = await requireAuth(req);
+    if (isErrorResponse(sessionOrError)) return sessionOrError;
+    const session = sessionOrError;
+
     const { code } = await params;
     const { userId } = await req.json();
 
     if (!code || !userId) {
-      return NextResponse.json({ error: "Code and userId are required" }, { status: 400 });
+      return apiError("Code and userId are required", 400);
+    }
+
+    if (session.userId !== userId) {
+      return apiError("Unauthorized: userId does not match session", 403);
     }
 
     const uppercaseCode = code.toUpperCase();
@@ -20,15 +29,19 @@ export async function POST(
     });
 
     if (!room || !room.contest) {
-      return NextResponse.json({ error: "Room or contest not found" }, { status: 404 });
+      return apiError("Room or contest not found", 404);
     }
 
     if (room.hostId !== userId) {
-      return NextResponse.json({ error: "Only the host can start the contest" }, { status: 403 });
+      return apiError("Only the host can start the contest", 403);
+    }
+
+    if (!room.player2Id) {
+      return apiError("Cannot start contest until two players have joined", 400);
     }
 
     if (room.status === "IN_PROGRESS" || room.status === "FINISHED") {
-      return NextResponse.json({ room });
+      return apiSuccess({ room });
     }
 
     const startTime = new Date();
@@ -56,9 +69,9 @@ export async function POST(
       },
     });
 
-    return NextResponse.json({ room: updatedRoom });
+    return apiSuccess({ room: updatedRoom });
   } catch (error: any) {
     console.error("Start contest API error:", error);
-    return NextResponse.json({ error: error?.message || "Internal server error" }, { status: 500 });
+    return apiError("Internal server error", 500);
   }
 }

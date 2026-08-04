@@ -1,14 +1,28 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { apiError, apiSuccess, validateEmail, validatePassword } from "@/lib/api-utils";
+import { createSessionToken, createSessionCookieHeader } from "@/lib/auth";
+import { rateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
   try {
+    const rl = rateLimit(req as any, 5, 60 * 1000);
+    if (!rl.success) {
+      return apiError("Too many registration attempts. Please try again later.", 429);
+    }
+
     const { handle, email, password, passwordToken } = await req.json();
 
     if (!handle || !email || !password || !passwordToken) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+      return apiError("Missing required fields", 400);
     }
+
+    const emailError = validateEmail(email);
+    if (emailError) return apiError(emailError, 400);
+
+    const passwordError = validatePassword(password);
+    if (passwordError) return apiError(passwordError, 400);
 
     const trimmedHandle = handle.trim();
     const trimmedEmail = email.trim().toLowerCase();
@@ -19,17 +33,11 @@ export async function POST(req: Request) {
     });
 
     if (!dbUser || dbUser.verificationToken !== `SET_PASSWORD_${passwordToken}`) {
-      return NextResponse.json(
-        { error: "Invalid or expired registration token. Please verify your handle again." },
-        { status: 403 }
-      );
+      return apiError("Invalid or expired registration token. Please verify your handle again.", 403);
     }
 
     if (dbUser.tokenExpiresAt && new Date() > dbUser.tokenExpiresAt) {
-      return NextResponse.json(
-        { error: "Registration token has expired. Please verify your handle again." },
-        { status: 403 }
-      );
+      return apiError("Registration token has expired. Please verify your handle again.", 403);
     }
 
     // Check if email is already in use by someone else
@@ -38,10 +46,7 @@ export async function POST(req: Request) {
     });
 
     if (existingEmail && existingEmail.handle !== trimmedHandle) {
-      return NextResponse.json(
-        { error: "This email is already registered to another Codeforces handle." },
-        { status: 409 }
-      );
+      return apiError("This email is already registered to another Codeforces handle.", 409);
     }
 
     // Hash the password
@@ -59,7 +64,13 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({
+    // Create session token
+    const token = await createSessionToken({
+      userId: updatedUser.id,
+      handle: updatedUser.handle,
+    });
+
+    const response = apiSuccess({
       user: {
         id: updatedUser.id,
         handle: updatedUser.handle,
@@ -71,11 +82,11 @@ export async function POST(req: Request) {
       }
     });
 
+    response.headers.set("Set-Cookie", createSessionCookieHeader(token));
+    return response;
+
   } catch (error: any) {
     console.error("Registration error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Internal server error" },
-      { status: 500 }
-    );
+    return apiError("Internal server error", 500);
   }
 }

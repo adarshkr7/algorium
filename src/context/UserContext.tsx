@@ -25,29 +25,33 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const saved = localStorage.getItem("algorium_user") || localStorage.getItem("codeduel_user");
-    if (saved) {
+    const fetchSession = async () => {
       try {
-        setUserState(JSON.parse(saved));
+        const res = await fetch("/api/users/me");
+        if (res.ok) {
+          const data = await res.json();
+          setUserState(data.user);
+        }
       } catch (e) {
-        console.error("Failed to parse saved user", e);
+        console.error("Failed to fetch session", e);
+      } finally {
+        setLoading(false);
       }
-    }
-    setLoading(false);
+    };
+    fetchSession();
   }, []);
 
   const setUser = (u: UserSession | null) => {
     setUserState(u);
-    if (u) {
-      localStorage.setItem("algorium_user", JSON.stringify(u));
-    } else {
-      localStorage.removeItem("algorium_user");
-      localStorage.removeItem("codeduel_user");
-    }
   };
 
-  const logout = () => {
-    setUser(null);
+  const logout = async () => {
+    setUserState(null);
+    try {
+      await fetch("/api/users/logout", { method: "POST" });
+    } catch (e) {
+      console.error("Failed to logout", e);
+    }
   };
 
   return (

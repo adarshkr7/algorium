@@ -1,48 +1,46 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { apiError, apiSuccess, validatePassword } from "@/lib/api-utils";
+import { rateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
   try {
-    const { handleOrEmail, otp, newPassword } = await req.json();
-
-    if (!handleOrEmail || !otp || !newPassword) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    const rl = rateLimit(req as any, 5, 60 * 1000);
+    if (!rl.success) {
+      return apiError("Too many password reset attempts. Please try again later.", 429);
     }
 
-    if (newPassword.length < 6) {
-      return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
+    const { handle, otp, newPassword } = await req.json();
+
+    if (!handle || !otp || !newPassword) {
+      return apiError("Handle, OTP, and new password are required", 400);
     }
 
-    // Find user
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { handle: { equals: handleOrEmail, mode: "insensitive" } },
-          { email: { equals: handleOrEmail, mode: "insensitive" } }
-        ]
-      }
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) return apiError(passwordError, 400);
+
+    const user = await prisma.user.findUnique({
+      where: { handle },
     });
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return apiError("User not found", 404);
     }
 
-    // Validate OTP
-    if (!user.verificationToken || user.verificationToken !== otp) {
-      return NextResponse.json({ error: "Invalid OTP" }, { status: 400 });
+    if (user.verificationToken !== otp) {
+      return apiError("Invalid OTP", 401);
     }
 
-    // Validate Expiry
-    if (!user.tokenExpiresAt || user.tokenExpiresAt < new Date()) {
-      return NextResponse.json({ error: "OTP has expired" }, { status: 400 });
+    if (!user.tokenExpiresAt || new Date() > user.tokenExpiresAt) {
+      return apiError("OTP has expired", 401);
     }
 
     // Hash the new password
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(newPassword, salt);
 
-    // Update the user password and clear the OTP fields
+    // Update password and clear OTP
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -52,9 +50,9 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({ success: true, message: "Password updated successfully" }, { status: 200 });
+    return apiSuccess({ success: true, message: "Password reset successfully" }, 200);
   } catch (error: any) {
     console.error("Error resetting password:", error);
-    return NextResponse.json({ error: "Failed to reset password", details: error.message }, { status: 500 });
+    return apiError("Failed to reset password", 500);
   }
 }

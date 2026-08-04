@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth, isErrorResponse, apiError, apiSuccess } from "@/lib/api-utils";
 
 export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId");
-
-    if (!userId) {
-      return NextResponse.json({ error: "User ID is required" }, { status: 400 });
-    }
+    const sessionOrError = await requireAuth(req);
+    if (isErrorResponse(sessionOrError)) return sessionOrError;
+    const session = sessionOrError;
+    const userId = session.userId;
 
     const activeRoom = await prisma.room.findFirst({
       where: {
@@ -37,11 +36,11 @@ export async function GET(req: Request) {
     });
 
     if (!activeRoom) {
-      return NextResponse.json({ room: null });
+      return apiSuccess({ room: null });
     }
 
-    return NextResponse.json({ room: activeRoom });
+    return apiSuccess({ room: activeRoom });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiError("Internal server error", 500);
   }
 }

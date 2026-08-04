@@ -1,27 +1,40 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createClient } from "@supabase/supabase-js";
+import { requireAuth, isErrorResponse, apiError, apiSuccess } from "@/lib/api-utils";
+import { finishContest } from "@/lib/services/contest-finalizer";
+import { BroadcastService } from "@/lib/services/broadcast";
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ code: string }> }
 ) {
   try {
+    const sessionOrError = await requireAuth(req);
+    if (isErrorResponse(sessionOrError)) return sessionOrError;
+    const session = sessionOrError;
+
     const { code } = await params;
     const { userId } = await req.json();
 
     if (!code || !userId) {
-      return NextResponse.json({ error: "Room code and userId are required" }, { status: 400 });
+      return apiError("Room code and userId are required", 400);
     }
 
+    if (session.userId !== userId) {
+      return apiError("Unauthorized: userId does not match session", 403);
+    }
+
+    const uppercaseCode = code.toUpperCase();
     const room = await prisma.room.findUnique({
-      where: { code: code.toUpperCase() },
+      where: { code: uppercaseCode },
       include: { contest: true },
     });
 
     if (!room) {
-      return NextResponse.json({ error: "Room not found" }, { status: 404 });
+      return apiError("Room not found", 404);
     }
+
+    const broadcaster = new BroadcastService(uppercaseCode);
 
     if (room.status === "IN_PROGRESS" && room.contest) {
       // Mark the participant as resigned
@@ -29,63 +42,20 @@ export async function POST(
         where: { contestId: room.contest.id, userId },
       });
 
-      if (participant) {
+      if (participant && !participant.hasResigned) {
         await prisma.participant.update({
           where: { id: participant.id },
           data: { hasResigned: true },
         });
 
-        const participants = await prisma.participant.findMany({
-          where: { contestId: room.contest.id },
-        });
-        
-        // If a player resigns, the contest ends immediately and the other player wins.
-        const quitter = participants.find(p => p.userId === userId);
-        const winner = participants.find(p => p.userId !== userId);
-        
-        const isDraw = participants.every(p => p.hasResigned);
-        
-        await prisma.room.update({
-          where: { id: room.id },
-          data: { status: "FINISHED" },
-        });
-        await prisma.contest.update({
-          where: { id: room.contest.id },
-          data: { status: "FINISHED", endTime: new Date() },
-        });
-        
-        // Update winner
-        if (!isDraw && winner) {
-          await prisma.participant.update({
-            where: { id: winner.id },
-            data: { isWinner: true },
-          });
-          
-          await prisma.user.update({ where: { id: winner.userId }, data: { wins: { increment: 1 } } });
-          await prisma.user.update({ where: { id: userId }, data: { losses: { increment: 1 } } });
-        } else if (isDraw) {
-          await prisma.user.update({ where: { id: userId }, data: { draws: { increment: 1 } } });
-          if (winner) {
-            await prisma.user.update({ where: { id: winner.userId }, data: { draws: { increment: 1 } } });
-          }
-        }
+        // Trigger finishContest to properly handle winner determination and DB writes
+        const finishResult = await finishContest(room.contest.id);
 
-        const supabase = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
-        );
-        const channel = supabase.channel(`room-${code}`);
-        
-        await channel.send({
-          type: 'broadcast',
-          event: 'contest-finished',
-          payload: {
-            winnerId: isDraw ? null : winner?.userId,
-            isDraw,
-            resignedUserId: userId,
-            reason: "resignation"
-          }
-        });
+        if (finishResult) {
+          // If finishContest ran successfully, it will have broadcast the 'contest-finished' event
+          // But we can optionally add a specific resignation broadcast here if needed,
+          // though finishContest broadcast is generally enough.
+        }
       }
     } else {
       // Room hasn't started yet, or finished. Anyone leaving cancels the room for everyone.
@@ -101,11 +71,7 @@ export async function POST(
       }
 
       const leaver = await prisma.user.findUnique({ where: { id: userId } });
-      const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
-      );
-      const channel = supabase.channel(`room-${code}`);
+      const channel = broadcaster["supabase"].channel(`room-${uppercaseCode}`); // access private field directly for this specific broadcast
       await channel.send({
         type: 'broadcast',
         event: 'room-cancelled',
@@ -113,9 +79,9 @@ export async function POST(
       });
     }
 
-    return NextResponse.json({ success: true });
+    return apiSuccess({ success: true });
   } catch (error) {
     console.error("Leave room API error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return apiError("Internal server error", 500);
   }
 }

@@ -1,3 +1,4 @@
+import "server-only";
 import {
   fetchCFProblemSet,
   fetchCFUserSolvedKeys,
@@ -6,7 +7,7 @@ import {
 
 export interface GenerateContestOptions {
   name: string;
-  mode: "BLITZ" | "CLASSIC";
+  mode: "BLITZ" | "CLASSIC" | "LOCKOUT";
   problemCount: number;
   durationMinutes: number;
   minRating: number;

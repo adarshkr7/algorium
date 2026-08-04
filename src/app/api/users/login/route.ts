@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { fetchCFUserInfo } from "@/lib/codeforces";
+import { apiError, apiSuccess } from "@/lib/api-utils";
+import { rateLimit } from "@/lib/rate-limit";
 import crypto from "crypto";
 
 const VERIFICATION_PROBLEMS = ["4A", "71A", "158A", "231A", "282A", "50A", "112A", "339A", "281A", "266A"];
@@ -16,9 +18,14 @@ function getRandomProblem(): string {
  */
 export async function POST(req: Request) {
   try {
+    const rl = rateLimit(req as any, 5, 60 * 1000);
+    if (!rl.success) {
+      return apiError("Too many login attempts. Please try again later.", 429);
+    }
+
     const { handle, forceVerify } = await req.json();
     if (!handle || typeof handle !== "string" || !handle.trim()) {
-      return NextResponse.json({ error: "Codeforces handle is required" }, { status: 400 });
+      return apiError("Codeforces handle is required", 400);
     }
 
     const trimmedHandle = handle.trim();
@@ -27,16 +34,13 @@ export async function POST(req: Request) {
     const existingUser = await prisma.user.findUnique({ where: { handle: trimmedHandle } });
     if (existingUser?.passwordHash && !forceVerify) {
       // They have an account, prompt for password
-      return NextResponse.json({ step: "password", handle: existingUser.handle });
+      return apiSuccess({ step: "password", handle: existingUser.handle });
     }
 
     const cfUser = await fetchCFUserInfo(trimmedHandle);
 
     if (!cfUser) {
-      return NextResponse.json(
-        { error: `Codeforces user '${trimmedHandle}' not found. Please verify your handle.` },
-        { status: 404 }
-      );
+      return apiError(`Codeforces user '${trimmedHandle}' not found. Please verify your handle.`, 404);
     }
 
     const token = getRandomProblem();
@@ -66,12 +70,9 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({ step: "verify", token, handle: cfUser.handle });
+    return apiSuccess({ step: "verify", token, handle: cfUser.handle });
   } catch (error: any) {
     console.error("Login initiate error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Internal server error" },
-      { status: 500 }
-    );
+    return apiError("Internal server error", 500);
   }
 }

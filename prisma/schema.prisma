@@ -6,10 +6,58 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
+
+// ── Enums ──
+
+enum RoomStatus {
+  WAITING
+  IN_PROGRESS
+  FINISHED
+  CANCELLED
+}
+
+enum ContestStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  FINISHED
+  CANCELLED
+}
+
+enum ContestMode {
+  BLITZ
+  CLASSIC
+  LOCKOUT
+}
+
+enum PointingSystem {
+  ICPC
+  POINTS
+}
+
+enum HostingType {
+  PLAYER_HOST
+  SUPERVISED
+}
+
+enum ParticipantRole {
+  HOST
+  GUEST
+  SUPERVISOR
+  PLAYER_1
+  PLAYER_2
+}
+
+enum MatchResult {
+  WIN
+  LOSS
+  DRAW
+}
+
+// ── Models ──
 
 model User {
   id           String         @id @default(uuid())
@@ -38,20 +86,20 @@ model User {
 }
 
 model Room {
-  id          String   @id @default(uuid())
-  code        String   @unique
+  id          String      @id @default(uuid())
+  code        String      @unique
   hostId      String
   guestId     String?
-  hostingType String   @default("PLAYER_HOST") // "PLAYER_HOST" (Host vs Guest) or "SUPERVISED" (Host spectates 2 players)
+  hostingType HostingType @default(PLAYER_HOST)
   player1Id   String?
   player2Id   String?
-  status      String   @default("WAITING") // WAITING, IN_PROGRESS, FINISHED
-  createdAt   DateTime @default(now())
+  status      RoomStatus  @default(WAITING)
+  createdAt   DateTime    @default(now())
 
-  host        User     @relation("HostedRooms", fields: [hostId], references: [id])
-  guest       User?    @relation("GuestRooms", fields: [guestId], references: [id])
-  player1     User?    @relation("Player1Rooms", fields: [player1Id], references: [id])
-  player2     User?    @relation("Player2Rooms", fields: [player2Id], references: [id])
+  host        User        @relation("HostedRooms", fields: [hostId], references: [id])
+  guest       User?       @relation("GuestRooms", fields: [guestId], references: [id])
+  player1     User?       @relation("Player1Rooms", fields: [player1Id], references: [id])
+  player2     User?       @relation("Player2Rooms", fields: [player2Id], references: [id])
   contest     Contest?
 }
 
@@ -59,18 +107,18 @@ model Contest {
   id              String         @id @default(uuid())
   roomId          String         @unique
   name            String
-  mode            String         // BLITZ, CLASSIC
-  pointingSystem  String         @default("ICPC") // ICPC, POINTS
+  mode            ContestMode
+  pointingSystem  PointingSystem @default(ICPC)
   problemCount    Int            @default(3)
   durationMinutes Int            @default(30)
   minRating       Int            @default(800)
   maxRating       Int            @default(1600)
-  allowedTags     String         // JSON array of strings
-  excludedTags    String         // JSON array of strings
+  allowedTags     String[]
+  excludedTags    String[]
   seed            String
   startTime       DateTime?
   endTime         DateTime?
-  status          String         @default("NOT_STARTED") // NOT_STARTED, IN_PROGRESS, FINISHED
+  status          ContestStatus  @default(NOT_STARTED)
 
   room            Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
   problems        Problem[]
@@ -84,7 +132,7 @@ model Problem {
   problemKey     String       // e.g., "1800-A"
   name           String
   rating         Int
-  tags           String       // JSON array of strings
+  tags           String[]
   indexInContest Int
   lockedWinnerId String?      // For Blitz mode: handle or user id who locked it
 
@@ -93,18 +141,18 @@ model Problem {
 }
 
 model Participant {
-  id            String   @id @default(uuid())
+  id            String          @id @default(uuid())
   contestId     String
   userId        String
-  role          String   // HOST, GUEST
-  score         Int      @default(0)
-  penalty       Int      @default(0)
-  acceptedCount Int      @default(0)
-  isWinner      Boolean  @default(false)
-  hasResigned   Boolean  @default(false)
+  role          ParticipantRole
+  score         Int             @default(0)
+  penalty       Int             @default(0)
+  acceptedCount Int             @default(0)
+  isWinner      Boolean         @default(false)
+  hasResigned   Boolean         @default(false)
 
-  contest       Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  user          User     @relation(fields: [userId], references: [id])
+  contest       Contest         @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  user          User            @relation(fields: [userId], references: [id])
 }
 
 model Submission {
@@ -124,18 +172,18 @@ model Submission {
 }
 
 model MatchHistory {
-  id             String   @id @default(uuid())
+  id             String      @id @default(uuid())
   userId         String
   roomCode       String
   opponentHandle String
-  mode           String   // BLITZ, CLASSIC
-  result         String   // WIN, LOSS, DRAW
+  mode           ContestMode
+  result         MatchResult
   userScore      Int
   opponentScore  Int
-  duration       Int      // in seconds
-  playedAt       DateTime @default(now())
+  duration       Int         // in seconds
+  playedAt       DateTime    @default(now())
 
-  user           User     @relation(fields: [userId], references: [id])
+  user           User        @relation(fields: [userId], references: [id])
 }
 
 model ContactMessage {

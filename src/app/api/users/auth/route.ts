@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { apiError, apiSuccess } from "@/lib/api-utils";
+import { createSessionToken, createSessionCookieHeader } from "@/lib/auth";
 
 export async function POST(req: Request) {
   try {
     const { handle, password } = await req.json();
 
     if (!handle || !password) {
-      return NextResponse.json({ error: "Handle and password are required" }, { status: 400 });
+      return apiError("Handle and password are required", 400);
     }
 
     const trimmedHandle = handle.trim();
@@ -18,24 +20,24 @@ export async function POST(req: Request) {
     });
 
     if (!dbUser || !dbUser.passwordHash) {
-      return NextResponse.json(
-        { error: "Invalid credentials or account not fully setup." },
-        { status: 401 }
-      );
+      return apiError("Invalid credentials or account not fully setup.", 401);
     }
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, dbUser.passwordHash);
 
     if (!isPasswordValid) {
-      return NextResponse.json(
-        { error: "Invalid password" },
-        { status: 401 }
-      );
+      return apiError("Invalid password", 401);
     }
 
+    // Create session token
+    const token = await createSessionToken({
+      userId: dbUser.id,
+      handle: dbUser.handle,
+    });
+
     // Return the user session object
-    return NextResponse.json({
+    const response = apiSuccess({
       user: {
         id: dbUser.id,
         handle: dbUser.handle,
@@ -47,11 +49,11 @@ export async function POST(req: Request) {
       }
     });
 
+    response.headers.set("Set-Cookie", createSessionCookieHeader(token));
+    return response;
+
   } catch (error: any) {
     console.error("Auth error:", error);
-    return NextResponse.json(
-      { error: error?.message || "Internal server error" },
-      { status: 500 }
-    );
+    return apiError("Internal server error", 500);
   }
 }
