@@ -60,6 +60,7 @@ model Contest {
   roomId          String         @unique
   name            String
   mode            String         // BLITZ, CLASSIC
+  pointingSystem  String         @default("ICPC") // ICPC, POINTS
   problemCount    Int            @default(3)
   durationMinutes Int            @default(30)
   minRating       Int            @default(800)

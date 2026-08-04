@@ -10,6 +10,7 @@ export async function POST(req: Request) {
       hostHandle,
       name,
       mode,
+      pointingSystem = "ICPC",
       hostingType = "PLAYER_HOST", // "PLAYER_HOST" (Host plays) vs "SUPERVISED" (Host spectates 2 participants)
       problemCount = 3,
       durationMinutes = 30,
@@ -76,6 +77,7 @@ export async function POST(req: Request) {
           create: {
             name,
             mode,
+            pointingSystem,
             problemCount: generatedProblems.length,
             durationMinutes: Number(durationMinutes),
             minRating: actualMinRating,

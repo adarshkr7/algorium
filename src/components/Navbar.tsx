@@ -212,6 +212,9 @@ export const Navbar: React.FC = () => {
           <Link href="/standings" className="neu-btn" style={{ padding: "8px 14px", fontWeight: 600, fontSize: "0.85rem", textDecoration: "none", border: "none", background: "transparent", boxShadow: "none" }}>
             Standings
           </Link>
+          <Link href="/docs" className="neu-btn" style={{ padding: "8px 14px", fontWeight: 600, fontSize: "0.85rem", textDecoration: "none", border: "none", background: "transparent", boxShadow: "none" }}>
+            Docs
+          </Link>
           <Link href="/contact" className="neu-btn" style={{ padding: "8px 14px", fontWeight: 600, fontSize: "0.85rem", textDecoration: "none", border: "none", background: "transparent", boxShadow: "none" }}>
             Contact
           </Link>

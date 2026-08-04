@@ -3,7 +3,7 @@
 import React, { useEffect, useState, use } from "react";
 import Link from "next/link";
 import {
-  Trophy, Swords, CheckCircle2, XCircle, MinusCircle, ArrowLeft, ExternalLink, KeyRound
+  Trophy, Swords, CheckCircle2, XCircle, MinusCircle, ArrowLeft, ArrowRight, ExternalLink, KeyRound
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 
@@ -63,123 +63,116 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
     <div className="stagger-children" style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
 
       {/* Profile banner */}
-      <div className="neu-card-lg" style={{ padding: "36px 40px", display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 28, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
+      <div style={{ padding: "40px", display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 28, flexWrap: "wrap", background: "rgba(255,255,255,0.02)", borderRadius: "24px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
           <div style={{ position: "relative", flexShrink: 0 }}>
-          <img
-            src={user.avatar} alt={user.handle}
-            style={{ width: 96, height: 96, borderRadius: "var(--r-lg)", objectFit: "cover", boxShadow: "var(--neu-shadow)" }}
-          />
-          <span style={{
-            position: "absolute", bottom: -6, right: -6,
-            background: "var(--bg-invert)",
-            borderRadius: "50%", width: 24, height: 24,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <Swords style={{ width: 12, height: 12, color: "var(--text-invert)" }} />
-          </span>
-        </div>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
-            <h1 style={{ fontWeight: 800, fontSize: "2rem", color: "var(--text-primary)", margin: 0, letterSpacing: "-0.02em" }}>
-              {user.handle}
-            </h1>
-            <span className="neu-chip" style={{ background: "var(--success)", color: "#fff" }}>
-              {user.rank}
+            <img
+              src={user.avatar} alt={user.handle}
+              style={{ width: 100, height: 100, borderRadius: "50%", objectFit: "cover" }}
+            />
+            <span style={{
+              position: "absolute", bottom: -4, right: -4,
+              background: "#FFFFFF",
+              borderRadius: "50%", width: 28, height: 28,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              border: "3px solid #000"
+            }}>
+              <Swords style={{ width: 14, height: 14, color: "#000" }} />
             </span>
           </div>
-          <div className="font-mono" style={{ fontSize: "0.82rem", color: "var(--text-secondary)", display: "flex", gap: 20 }}>
-            <span>Rating: <strong style={{ color: "var(--success)" }}>{user.rating}</strong></span>
-            <span>Max: <strong style={{ color: "var(--warning)" }}>{user.maxRating}</strong></span>
-          </div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
+              <h1 style={{ fontWeight: 800, fontSize: "2.4rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.02em" }}>
+                {user.handle}
+              </h1>
+              <span style={{ padding: "4px 12px", background: "rgba(255,255,255,0.1)", color: "#FFFFFF", borderRadius: "100px", fontSize: "0.8rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                {user.rank}
+              </span>
+            </div>
+            <div className="font-mono" style={{ fontSize: "0.9rem", color: "var(--text-muted)", display: "flex", gap: 24 }}>
+              <span>Rating <strong style={{ color: "var(--success)" }}>{user.rating}</strong></span>
+              <span>Max <strong style={{ color: "#FFFFFF" }}>{user.maxRating}</strong></span>
+            </div>
           </div>
         </div>
 
-        {currentUser && currentUser.handle === user.handle && (
-          <Link href="/change-pass" className="neu-btn" style={{ padding: "10px 18px", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 8 }}>
-            <KeyRound style={{ width: 16, height: 16, color: "var(--accent)" }} />
-            <span>Change Password</span>
-          </Link>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <a href={`https://codeforces.com/profile/${user.handle}`} target="_blank" rel="noopener noreferrer" style={{ padding: "10px 20px", fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.05)", color: "#FFFFFF", borderRadius: "100px", textDecoration: "none" }}>
+            <ExternalLink style={{ width: 16, height: 16 }} />
+            <span>Codeforces</span>
+          </a>
+          {currentUser && currentUser.handle === user.handle && (
+            <Link href="/change-pass" style={{ padding: "10px 20px", fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 8, background: "#FFFFFF", color: "#000000", borderRadius: "100px", textDecoration: "none" }}>
+              <KeyRound style={{ width: 16, height: 16 }} />
+              <span>Change Password</span>
+            </Link>
+          )}
+        </div>
       </div>
 
       {/* Stats grid */}
       <div className="stagger-children" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
         {statCards.map((sc) => (
-          <div key={sc.label} className="neu-card" style={{ padding: "22px 18px", textAlign: "center" }}>
-            <div className="neu-label" style={{ marginBottom: 8 }}>{sc.label}</div>
-            <div className="font-mono" style={{ fontSize: "1.8rem", fontWeight: 800, color: sc.color }}>{sc.value}</div>
+          <div key={sc.label} style={{ padding: "32px 24px", textAlign: "center", background: "rgba(255,255,255,0.02)", borderRadius: "20px" }}>
+            <div style={{ marginBottom: 12, fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em" }}>{sc.label}</div>
+            <div className="font-mono" style={{ fontSize: "2rem", fontWeight: 800, color: sc.color }}>{sc.value}</div>
           </div>
         ))}
       </div>
 
       {/* Match history */}
-      <div className="neu-card" style={{ padding: "28px 32px" }}>
-        <h3 style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 800, fontSize: "0.9rem", color: "var(--text-primary)", marginBottom: 20 }}>
-          <span className="neu-icon" style={{ width: 32, height: 32, background: "var(--bg-invert)", border: "none" }}>
-            <Swords style={{ width: 14, height: 14, color: "var(--text-invert)" }} />
-          </span>
-          Recent Match History
+      <div style={{ marginTop: "16px" }}>
+        <h3 style={{ display: "flex", alignItems: "center", gap: 12, fontWeight: 700, fontSize: "0.85rem", color: "var(--text-muted)", letterSpacing: "0.15em", marginBottom: 24, textTransform: "uppercase" }}>
+          <Swords style={{ width: 18, height: 18, color: "var(--accent)" }} /> Recent Match History
         </h3>
 
         {matchHistory.length === 0 ? (
-          <div className="neu-inset" style={{ padding: "40px 24px", textAlign: "center" }}>
-            <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+          <div style={{ padding: "40px", textAlign: "center", background: "rgba(255,255,255,0.02)", borderRadius: "20px" }}>
+            <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
               No match history recorded yet. Host or join a duel to get started!
             </p>
           </div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 8px" }}>
-              <thead>
-                <tr>
-                  {["Result", "Opponent", "Mode", "Score", "Date", ""].map((h) => (
-                    <th key={h} className="neu-label" style={{ textAlign: "left", padding: "0 12px 8px", fontWeight: 700 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {matchHistory.map((match: any) => (
-                  <tr key={match.id}>
-                    <td style={{ padding: "10px 12px" }}>
-                      <span style={{
-                        display: "inline-flex", alignItems: "center", gap: 6,
-                        padding: "4px 12px", borderRadius: "var(--r-pill)",
-                        fontSize: "0.72rem", fontWeight: 700,
-                        background: match.result === "WIN" ? "var(--success)" : match.result === "LOSS" ? "var(--danger)" : "var(--bg-subtle)",
-                        color: match.result === "WIN" || match.result === "LOSS" ? "#fff" : "var(--text-primary)",
-                      }}>
-                        {match.result === "WIN" ? <CheckCircle2 style={{ width: 11, height: 11 }} /> : match.result === "LOSS" ? <XCircle style={{ width: 11, height: 11 }} /> : <MinusCircle style={{ width: 11, height: 11 }} />}
-                        {match.result}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 12px", fontWeight: 700, color: "var(--text-primary)", fontSize: "0.88rem" }}>{match.opponentHandle}</td>
-                    <td style={{ padding: "10px 12px" }}>
-                      <span className="neu-chip font-mono">{match.mode}</span>
-                    </td>
-                    <td style={{ padding: "10px 12px", fontWeight: 700, color: "var(--text-secondary)", fontFamily: "JetBrains Mono, monospace", fontSize: "0.85rem" }}>
-                      {match.userScore} – {match.opponentScore}
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "var(--text-muted)", fontSize: "0.78rem", fontFamily: "JetBrains Mono, monospace" }}>
-                      {new Date(match.playedAt).toLocaleDateString()}
-                    </td>
-                    <td style={{ padding: "10px 12px" }}>
-                      {match.roomCode && (
-                        <Link
-                          href={`/arena/${match.roomCode}`}
-                          className="neu-btn"
-                          style={{ padding: "6px 12px", fontSize: "0.72rem", gap: 5, height: 30 }}
-                          title="Open contest page"
-                        >
-                          <ExternalLink style={{ width: 11, height: 11 }} />
-                          View
-                        </Link>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {matchHistory.map((match: any) => (
+              <div key={match.id} style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+                padding: "20px 24px",
+                background: "rgba(255,255,255,0.02)", borderRadius: "16px"
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+                  <div style={{
+                    width: 70, textAlign: "center", padding: "6px 0", borderRadius: "8px",
+                    background: match.result === "WIN" ? "rgba(16,185,129,0.1)" : match.result === "LOSS" ? "rgba(239,68,68,0.1)" : "rgba(255,255,255,0.05)",
+                    color: match.result === "WIN" ? "var(--success)" : match.result === "LOSS" ? "var(--danger)" : "var(--text-muted)",
+                    fontSize: "0.75rem", fontWeight: 800, letterSpacing: "0.05em"
+                  }}>
+                    {match.result}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 800, color: "#FFFFFF", fontSize: "1.1rem" }}>{match.opponentHandle}</div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      {match.mode} • {new Date(match.playedAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
+                  <div className="font-mono" style={{ fontWeight: 800, color: "var(--text-primary)", fontSize: "1.2rem", textAlign: "right" }}>
+                    {match.userScore} <span style={{ color: "var(--text-muted)", margin: "0 8px" }}>—</span> {match.opponentScore}
+                  </div>
+                  {match.roomCode && (
+                    <Link
+                      href={`/arena/${match.roomCode}`}
+                      style={{ padding: "8px 16px", fontSize: "0.8rem", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.05)", color: "#FFFFFF", borderRadius: "100px", textDecoration: "none" }}
+                    >
+                      <span>Arena</span>
+                      <ArrowRight style={{ width: 14, height: 14 }} />
+                    </Link>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

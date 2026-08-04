@@ -44,66 +44,46 @@ export default async function StandingsPage() {
         </p>
       </div>
 
-      <div className="neu-card" style={{ overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-            <thead>
-              <tr style={{ background: "var(--bg-subtle)", borderBottom: "1px solid var(--border)" }}>
-                <th style={{ padding: "16px 24px", fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rank</th>
-                <th style={{ padding: "16px 24px", fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Player</th>
-                <th style={{ padding: "16px 24px", fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Rating</th>
-                <th style={{ padding: "16px 24px", fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>W / L / D</th>
-                <th style={{ padding: "16px 24px", fontWeight: 700, color: "var(--text-muted)", fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "right" }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u, i) => (
-                <tr key={u.id} className="hover-bg-subtle" style={{ borderBottom: "1px solid var(--border)", transition: "background 0.2s" }}>
-                  <td style={{ padding: "16px 24px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: "1.1rem", color: i < 3 ? "var(--accent)" : "var(--text-secondary)" }}>
-                      {i === 0 && <Medal style={{ color: "gold", width: 20, height: 20 }} />}
-                      {i === 1 && <Medal style={{ color: "silver", width: 20, height: 20 }} />}
-                      {i === 2 && <Medal style={{ color: "#cd7f32", width: 20, height: 20 }} />}
-                      {i > 2 && <span style={{ width: 20, display: "inline-block", textAlign: "center" }}>#{i + 1}</span>}
-                    </div>
-                  </td>
-                  <td style={{ padding: "16px 24px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <img src={u.avatar} alt={u.handle} style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover" }} />
-                      <div>
-                        <div style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "1rem" }}>{u.handle}</div>
-                        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{u.rank}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td style={{ padding: "16px 24px", fontWeight: 800, color: "var(--text-primary)", fontSize: "1.1rem" }}>
-                    {u.rating}
-                  </td>
-                  <td style={{ padding: "16px 24px" }}>
-                    <span style={{ color: "var(--success)", fontWeight: 700 }}>{u.wins}</span>
-                    <span style={{ color: "var(--text-muted)", margin: "0 4px" }}>/</span>
-                    <span style={{ color: "var(--danger)", fontWeight: 700 }}>{u.losses}</span>
-                    <span style={{ color: "var(--text-muted)", margin: "0 4px" }}>/</span>
-                    <span style={{ color: "var(--text-secondary)", fontWeight: 700 }}>{u.draws}</span>
-                  </td>
-                  <td style={{ padding: "16px 24px", textAlign: "right" }}>
-                    <Link href={`/profile/${encodeURIComponent(u.handle)}`} className="neu-btn" style={{ padding: "8px 16px", fontSize: "0.78rem", display: "inline-flex" }}>
-                      <span>Profile</span>
-                      <ArrowRight style={{ width: 14, height: 14 }} />
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-              {users.length === 0 && (
-                <tr>
-                  <td colSpan={5} style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-                    No users found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {users.map((u, i) => (
+          <Link href={`/profile/${encodeURIComponent(u.handle)}`} key={u.id} style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+            padding: "24px 20px",
+            borderBottom: "1px solid rgba(255,255,255,0.05)",
+            textDecoration: "none",
+            transition: "background 0.2s",
+            borderRadius: "16px",
+          }}
+          className="hover-bg-subtle">
+            <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+              <div style={{ width: 40, textAlign: "center", fontWeight: 800, fontSize: "1.2rem", color: i < 3 ? "var(--accent)" : "var(--text-muted)" }}>
+                {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}
+              </div>
+              <img src={u.avatar} alt={u.handle} style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover" }} />
+              <div>
+                <div style={{ fontWeight: 800, color: "#FFFFFF", fontSize: "1.2rem", letterSpacing: "-0.02em" }}>{u.handle}</div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 4 }}>{u.rank}</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 32, textAlign: "right" }}>
+              <div className="font-mono">
+                <div style={{ fontWeight: 800, color: "var(--success)", fontSize: "1.2rem" }}>
+                  {u.rating}
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 4 }}>
+                  <span style={{ color: "var(--success)" }}>{u.wins}</span> / <span style={{ color: "var(--danger)" }}>{u.losses}</span> / {u.draws}
+                </div>
+              </div>
+              <ArrowRight style={{ width: 20, height: 20, color: "var(--text-muted)" }} />
+            </div>
+          </Link>
+        ))}
+        {users.length === 0 && (
+          <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
+            No users found.
+          </div>
+        )}
       </div>
     </div>
   );

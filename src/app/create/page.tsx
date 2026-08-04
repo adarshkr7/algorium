@@ -20,6 +20,7 @@ function CreateContestPageInner() {
   const [name, setName] = useState("Algorium Match");
   const [hostingType, setHostingType] = useState<"PLAYER_HOST" | "SUPERVISED">("PLAYER_HOST");
   const [mode, setMode] = useState<"BLITZ" | "CLASSIC">(initialMode);
+  const [pointingSystem, setPointingSystem] = useState<"ICPC" | "POINTS">("ICPC");
   const [problemCount, setProblemCount] = useState(3);
   const [durationMinutes, setDurationMinutes] = useState(30);
   const [ratingMode, setRatingMode] = useState<"RANGE" | "EXACT">("RANGE");
@@ -68,6 +69,7 @@ function CreateContestPageInner() {
           hostHandle: user.handle,
           name,
           mode,
+          pointingSystem,
           hostingType,
           problemCount,
           durationMinutes,
@@ -96,18 +98,30 @@ function CreateContestPageInner() {
 
   return (
     <div style={{ position: "fixed", top: 64, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", overflow: "hidden", padding: "40px" }}>
-      <div style={{ maxWidth: 1100, width: "100%", margin: "0 auto", display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ maxWidth: 1200, width: "100%", margin: "0 auto", display: "flex", flexDirection: "column", height: "100%" }}>
         
         {/* Main Heading Always on Top */}
-        <div style={{ flexShrink: 0 }}>
-          <h1 style={{ fontWeight: 800, fontSize: "3.5rem", color: "#FFFFFF", margin: "0 0 40px", letterSpacing: "-0.05em", lineHeight: 1 }}>
-            Create Duel.
-          </h1>
-          {error && (
-            <div className="animate-shake" style={{ color: "var(--danger)", fontSize: "0.9rem", fontWeight: 600, marginBottom: 20 }}>
-              {error}
-            </div>
-          )}
+        <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "40px" }}>
+          <div>
+            <h1 style={{ fontWeight: 800, fontSize: "3.5rem", color: "#FFFFFF", margin: "0", letterSpacing: "-0.05em", lineHeight: 1 }}>
+              Create Duel.
+            </h1>
+            {error && (
+              <div className="animate-shake" style={{ color: "var(--danger)", fontSize: "0.9rem", fontWeight: 600, marginTop: 16 }}>
+                {error}
+              </div>
+            )}
+          </div>
+          <button
+            type="submit" form="create-contest-form" disabled={loading}
+            style={{ 
+              background: "#FFFFFF", color: "#000000", padding: "16px 48px", borderRadius: "100px",
+              fontSize: "1.1rem", fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase",
+              border: "none", cursor: loading ? "not-allowed" : "pointer", transition: "opacity 0.2s", opacity: loading ? 0.7 : 1
+            }}
+          >
+            {loading ? "Generating..." : "Create"}
+          </button>
         </div>
 
         {/* Scrollable Form Area */}
@@ -180,6 +194,33 @@ function CreateContestPageInner() {
                 </div>
                 <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, height: 16 }}>
                   {mode === "BLITZ" ? "Linear race. Lock on solve." : "ICPC style with penalty time."}
+                </p>
+              </div>
+
+              {/* Pointing System Selector */}
+              <div style={{ ...S.card, marginBottom: 0, marginTop: 48 }}>
+                <label style={S.label}>Scoring System</label>
+                <div style={{ position: "relative", display: "flex", background: "#000000", border: "none", borderRadius: "100px", padding: 6, marginBottom: 12 }}>
+                  <div style={{
+                    position: "absolute", top: 6, bottom: 6, left: pointingSystem === "ICPC" ? 6 : "calc(50% + 3px)",
+                    width: "calc(50% - 9px)", background: "#FFFFFF", borderRadius: "100px",
+                    transition: "left 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
+                  }} />
+                  
+                  <button type="button" onClick={() => setPointingSystem("ICPC")} 
+                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
+                             fontSize: "1.1rem", fontWeight: 700, color: pointingSystem === "ICPC" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
+                    ICPC
+                  </button>
+                  
+                  <button type="button" onClick={() => setPointingSystem("POINTS")} 
+                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
+                             fontSize: "1.1rem", fontWeight: 700, color: pointingSystem === "POINTS" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
+                    Points
+                  </button>
+                </div>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, height: 16 }}>
+                  {pointingSystem === "ICPC" ? "Default scoring. Solves and penalty." : "Problems give 100, 200, 300... points."}
                 </p>
               </div>
             </div>
@@ -280,19 +321,7 @@ function CreateContestPageInner() {
 
           </div>
 
-          {/* Submit */}
-          <div style={{ marginTop: 40, paddingBottom: 40 }}>
-            <button
-              type="submit" disabled={loading}
-              style={{ 
-                background: "#FFFFFF", color: "#000000", width: "100%", padding: "24px", 
-                fontSize: "1.2rem", fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase",
-                border: "none", cursor: loading ? "not-allowed" : "pointer", transition: "opacity 0.2s", opacity: loading ? 0.7 : 1
-              }}
-            >
-              {loading ? "Generating..." : "Create"}
-            </button>
-          </div>
+          <div style={{ paddingBottom: 40 }}></div>
 
         </form>
       </div>
