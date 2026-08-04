@@ -205,7 +205,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
       <div className="neu-icon" style={{ width: 64, height: 64, background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
         <Swords style={{ width: 28, height: 28, color: "var(--text-primary)" }} />
       </div>
-      <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>Connecting to Room {code}...</p>
+      <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>Connecting to Room <span style={{ color: "#16A34A", fontWeight: 700 }}>{code}</span>...</p>
     </div>
   );
 
@@ -294,7 +294,7 @@ export default function RoomLobbyPage({ params }: { params: Promise<{ code: stri
               {isSupervised ? "Supervised Match" : "1v1 Duel"} • {contest?.name}
             </div>
             <h1 style={{ fontWeight: 800, fontSize: "3.5rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.05em", lineHeight: 0.9 }}>
-              Room<br/>{code}.
+              Room<br/><span style={{ color: "#16A34A" }}>{code}</span>.
             </h1>
           </div>
           

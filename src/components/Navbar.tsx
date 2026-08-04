@@ -202,7 +202,7 @@ export const Navbar: React.FC = () => {
         <Link href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0, gap: 10 }}>
           <img src="/logo.png" alt="Algorium Logo" style={{ height: "32px", width: "32px", borderRadius: "50%", objectFit: "cover" }} />
           <span style={{ fontWeight: 800, fontSize: "1.25rem", color: "#FFFFFF", letterSpacing: "-0.02em" }}>
-            ALGO<span style={{ color: "#888888" }}>RIUM</span>
+            ALGO<span style={{ color: "#16A34A" }}>RIUM</span>
           </span>
         </Link>
 

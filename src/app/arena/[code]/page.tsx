@@ -34,12 +34,14 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
   const [winnerInfo, setWinnerInfo] = useState<any>(null);
   const [notification, setNotification] = useState<string | null>(null);
   const [blitzUnlockCountdown, setBlitzUnlockCountdown] = useState<number | null>(null);
+  const [resignationModalInfo, setResignationModalInfo] = useState<any>(null);
 
   useEffect(() => {
     let isMounted = true;
     let evalInterval: NodeJS.Timeout | null = null;
     let channel: any = null;
     let retryTimeout: NodeJS.Timeout | null = null;
+    const currentUser = userRef.current;
 
     async function loadArenaData() {
       try {
@@ -132,6 +134,13 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
           })
           .on("broadcast", { event: "blitz-problem-locked" }, (payload: any) => {
             if (isMounted) {
+              const { winnerHandle } = payload.payload;
+              setNotification(`⚡ ${winnerHandle} locked a problem!`);
+              setTimeout(() => setNotification(null), 5000);
+            }
+          })
+          .on("broadcast", { event: "strict-blitz-problem-locked" }, (payload: any) => {
+            if (isMounted) {
               const { winnerHandle, nextIndex } = payload.payload;
               setNotification(`⚡ ${winnerHandle} locked the current problem! Moving to Problem ${String.fromCharCode(65 + nextIndex)}...`);
               setBlitzUnlockCountdown(3);
@@ -149,21 +158,25 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
           })
           .on("broadcast", { event: "contest-finished" }, (payload: any) => {
             if (isMounted) {
-              setIsFinished(true);
-              setWinnerInfo(payload.payload);
               const currentUser = userRef.current;
-              if (currentUser && payload.payload.winnerId === currentUser.id) {
-                confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+              if (payload.payload.reason === "resignation" && currentUser && currentUser.id !== payload.payload.resignedUserId) {
+                setResignationModalInfo(payload.payload);
+              } else {
+                setIsFinished(true);
+                setWinnerInfo(payload.payload);
+                if (currentUser && payload.payload.winnerId === currentUser.id) {
+                  confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+                }
               }
             }
           })
           .subscribe();
 
-        // Trigger Evaluation Engine & Sync State via API Polling ONLY for the host to avoid duplicated DB queries
+        // Trigger Evaluation Engine & Sync State via API Polling for participants
         const currentUser = userRef.current;
-        const isHost = currentUser && (rm.hostId === currentUser.id || rm.player1Id === currentUser.id);
+        const isParticipant = currentUser && (rm.hostId === currentUser.id || rm.player1Id === currentUser.id || rm.guestId === currentUser.id || rm.player2Id === currentUser.id);
         
-        if (ct.status !== "FINISHED" && isHost) {
+        if (ct.status !== "FINISHED" && isParticipant) {
           evalInterval = setInterval(async () => {
             try {
               const evalRes = await fetch(`/api/contests/${ct.id}/evaluate`, { method: "POST" });
@@ -303,11 +316,13 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
           ).length;
           penalty += Math.floor((ac.solveTimeSeconds || 0) / 60) + wrongBefore * 20;
         }
-        if (contest.mode === "BLITZ" && prob.lockedWinnerId === playerId) locked++;
+        if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
+          if (prob.lockedWinnerId === playerId) locked++;
+        }
         
         if (contest.pointingSystem === "POINTS") {
           const probPoints = ((prob.indexInContest ?? idx) + 1) * 100;
-          if (contest.mode === "BLITZ") {
+          if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
             if (prob.lockedWinnerId === playerId) points += probPoints;
           } else {
             if (ac) points += probPoints;
@@ -326,7 +341,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
       else if (p2Stats.points > p1Stats.points) winnerId = player2?.id;
       else if (p1Stats.penalty < p2Stats.penalty) winnerId = player1?.id;
       else if (p2Stats.penalty < p1Stats.penalty) winnerId = player2?.id;
-    } else if (contest.mode === "BLITZ") {
+    } else if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
       if (p1Stats.locked > p2Stats.locked) winnerId = player1?.id;
       else if (p2Stats.locked > p1Stats.locked) winnerId = player2?.id;
     } else {
@@ -387,7 +402,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                   if (b.stats.points !== a.stats.points) return b.stats.points - a.stats.points;
                   return a.stats.penalty - b.stats.penalty;
                 }
-                if (contest.mode === "BLITZ") return b.stats.locked - a.stats.locked;
+                if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") return b.stats.locked - a.stats.locked;
                 if (b.stats.accepted !== a.stats.accepted) return b.stats.accepted - a.stats.accepted;
                 return a.stats.penalty - b.stats.penalty;
               })
@@ -408,7 +423,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                   </div>
                   <div className="font-mono" style={{ textAlign: "right" }}>
                     <div style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--success)" }}>
-                      {contest.pointingSystem === "POINTS" ? `${stats.points} Points` : contest.mode === "BLITZ" ? `${stats.locked} Locked` : `${stats.accepted} Solved`}
+                      {contest.pointingSystem === "POINTS" ? `${stats.points} Points` : (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? `${stats.locked} Locked` : `${stats.accepted} Solved`}
                     </div>
                     {(contest.mode === "CLASSIC" || contest.pointingSystem === "POINTS") && (
                       <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>+{stats.penalty}m penalty</div>
@@ -429,7 +444,9 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
             {problems.map((prob: any, idx: number) => {
               const p1AC = submissions.find((s) => s.problemId === prob.id && s.userId === player1?.id && s.verdict === "OK");
               const p2AC = submissions.find((s) => s.problemId === prob.id && s.userId === player2?.id && s.verdict === "OK");
-              const isLocked = contest.mode === "BLITZ" && prob.lockedWinnerId != null;
+              const activeIdx = contest.mode === "BLITZ" ? problems.findIndex((p: any) => !p.lockedWinnerId) : -1;
+              const isFutureLocked = contest.mode === "BLITZ" && idx > activeIdx && activeIdx !== -1;
+              const isLocked = ((contest.mode === "LOCKOUT" || contest.mode === "BLITZ") && prob.lockedWinnerId != null) || isFutureLocked;
               const lockerHandle = prob.lockedWinnerId === player1?.id ? player1?.handle : prob.lockedWinnerId === player2?.id ? player2?.handle : null;
               return (
                 <div key={prob.id} style={{ padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "12px" }}>
@@ -449,9 +466,14 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                    {isLocked && (
+                    {isLocked && prob.lockedWinnerId != null && (
                       <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "100px", background: "rgba(239,68,68,0.1)", color: "var(--danger)", fontSize: "0.75rem", fontWeight: 600 }}>
                         <Lock style={{ width: 12, height: 12 }} /> Locked by {lockerHandle}
+                      </span>
+                    )}
+                    {isLocked && prob.lockedWinnerId == null && (
+                      <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "100px", background: "rgba(255,255,255,0.05)", color: "var(--text-muted)", fontSize: "0.75rem", fontWeight: 600 }}>
+                        <Lock style={{ width: 12, height: 12 }} /> Locked
                       </span>
                     )}
                     {p1AC && (
@@ -538,9 +560,12 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
   const selectedProblem = problems[selectedProblemIndex] || problems[0];
 
 
-  const getProblemStatus = (prob: any) => {
+  const activeBlitzIndex = contest.mode === "BLITZ" ? problems.findIndex((p) => !p.lockedWinnerId) : -1;
+
+  const getProblemStatus = (prob: any, idx: number) => {
     if (!prob) return { isLocked: false, lockedByPlayer1: false, lockedByPlayer2: false, myAC: false, oppAC: false };
-    const isLocked = contest.mode === "BLITZ" && prob.lockedWinnerId != null;
+    const isFutureLocked = contest.mode === "BLITZ" && idx > activeBlitzIndex && activeBlitzIndex !== -1;
+    const isLocked = ((contest.mode === "LOCKOUT" || contest.mode === "BLITZ") && prob.lockedWinnerId != null) || isFutureLocked;
     const lockedByPlayer1 = prob.lockedWinnerId === player1?.id;
     const lockedByPlayer2 = prob.lockedWinnerId === player2?.id;
 
@@ -554,7 +579,6 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
     return { isLocked, lockedByPlayer1, lockedByPlayer2, myAC, oppAC };
   };
 
-  const activeBlitzIndex = contest.mode === "BLITZ" ? problems.findIndex((p) => !p.lockedWinnerId) : -1;
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
@@ -563,15 +587,15 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <div style={{
             width: 48, height: 48, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-            background: contest.mode === "BLITZ" ? "rgba(34,197,94,0.1)" : "rgba(250,250,250,0.05)",
+            background: (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? "rgba(34,197,94,0.1)" : "rgba(250,250,250,0.05)",
           }}>
-            {contest.mode === "BLITZ" ? <Zap style={{ width: 22, height: 22, color: "var(--success)" }} /> : <Shield style={{ width: 22, height: 22, color: "#FFF" }} />}
+            {(contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? <Zap style={{ width: 22, height: 22, color: "var(--success)" }} /> : <Shield style={{ width: 22, height: 22, color: "#FFF" }} />}
           </div>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <h1 style={{ fontWeight: 800, fontSize: "1.8rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.05em" }}>{contest.name}</h1>
-              <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.05em", background: contest.mode === "BLITZ" ? "rgba(34,197,94,0.1)" : "rgba(255,255,255,0.1)", color: contest.mode === "BLITZ" ? "var(--success)" : "#FFFFFF" }}>
-                {contest.mode}
+              <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.05em", background: (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? "rgba(34,197,94,0.1)" : "rgba(255,255,255,0.1)", color: (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? "var(--success)" : "#FFFFFF" }}>
+                {contest.mode.replace('_', ' ')}
               </span>
               {isSupervised && (
                 <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.05em", background: "rgba(245,158,11,0.1)", color: "var(--warning)" }}>
@@ -579,7 +603,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                 </span>
               )}
             </div>
-            <p className="font-mono" style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0" }}>Room: {code}</p>
+            <p className="font-mono" style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0" }}>Room: <span style={{ color: "#16A34A", fontWeight: 700 }}>{code}</span></p>
           </div>
         </div>
 
@@ -624,11 +648,37 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
         </div>
       )}
 
+      {resignationModalInfo && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, backdropFilter: "blur(4px)" }}>
+          <div className="animate-fade-in-up" style={{ background: "rgba(20,20,20,0.95)", padding: "32px", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.1)", textAlign: "center", maxWidth: "400px", width: "90%" }}>
+            <AlertCircle style={{ width: 48, height: 48, color: "var(--warning)", margin: "0 auto 16px" }} />
+            <h2 style={{ margin: "0 0 8px", fontSize: "1.5rem", color: "#FFFFFF" }}>Opponent Resigned</h2>
+            <p style={{ color: "var(--text-muted)", marginBottom: "24px", lineHeight: 1.5 }}>
+              The other player has resigned from the contest.
+            </p>
+            <button 
+              onClick={() => {
+                setIsFinished(true);
+                setWinnerInfo(resignationModalInfo);
+                setResignationModalInfo(null);
+                const currentUser = userRef.current;
+                if (currentUser && resignationModalInfo.winnerId === currentUser.id) {
+                  confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+                }
+              }} 
+              style={{ padding: "12px 32px", background: "#FFFFFF", color: "#000000", border: "none", borderRadius: "100px", fontWeight: 700, cursor: "pointer", fontSize: "1rem" }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 24 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <div style={{ padding: "16px", display: "flex", gap: 12, overflowX: "auto", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "16px" }}>
             {problems.map((prob, idx) => {
-              const status = getProblemStatus(prob);
+              const status = getProblemStatus(prob, idx);
               const isSelected = idx === selectedProblemIndex;
               const isActive = contest.mode === "BLITZ" && idx === activeBlitzIndex;
 
@@ -636,6 +686,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                 <button
                   key={prob.id || idx}
                   onClick={() => setSelectedProblemIndex(idx)}
+                  disabled={status.isLocked}
                   className="font-mono"
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
@@ -703,8 +754,15 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
               <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.82rem", flexWrap: "wrap", gap: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "12px" }}>
                 <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Problem Status</span>
                 {(() => {
-                  const status = getProblemStatus(selectedProblem);
+                  const status = getProblemStatus(selectedProblem, selectedProblemIndex);
                   if (status.isLocked) {
+                    if (selectedProblem.lockedWinnerId == null) {
+                      return (
+                        <span className="font-mono" style={{ padding: "6px 12px", borderRadius: "100px", background: "rgba(255,255,255,0.05)", color: "var(--text-muted)", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                          <Lock style={{ width: 14, height: 14 }} /> LOCKED (Solve previous to unlock)
+                        </span>
+                      );
+                    }
                     const lockerHandle = status.lockedByPlayer1 ? player1?.handle : player2?.handle;
                     return (
                       <span className="font-mono" style={{ padding: "6px 12px", borderRadius: "100px", background: "rgba(239,68,68,0.1)", color: "var(--danger)", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
@@ -758,7 +816,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                     if (pointsB !== pointsA) return pointsB - pointsA;
                     return (a.stats?.penaltyMinutes ?? 0) - (b.stats?.penaltyMinutes ?? 0);
                   }
-                  if (contest.mode === "BLITZ") return (b.stats?.lockedWon ?? 0) - (a.stats?.lockedWon ?? 0);
+                  if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") return (b.stats?.lockedWon ?? 0) - (a.stats?.lockedWon ?? 0);
                   const acA = a.stats?.acceptedCount ?? 0;
                   const acB = b.stats?.acceptedCount ?? 0;
                   if (acB !== acA) return acB - acA;
@@ -783,7 +841,7 @@ export default function ArenaPage({ params }: { params: Promise<{ code: string }
                     </div>
                     <div style={{ textAlign: "right" }} className="font-mono">
                       <div style={{ fontWeight: 800, color: "var(--success)", fontSize: "1.2rem" }}>
-                        {contest.pointingSystem === "POINTS" ? `${stats?.points ?? 0} Points` : contest.mode === "BLITZ" ? `${stats?.lockedWon ?? 0} Locked` : `${stats?.acceptedCount ?? 0} Solved`}
+                        {contest.pointingSystem === "POINTS" ? `${stats?.points ?? 0} Points` : (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? `${stats?.lockedWon ?? 0} Locked` : `${stats?.acceptedCount ?? 0} Solved`}
                       </div>
                       {(contest.mode === "CLASSIC" || contest.pointingSystem === "POINTS") && (
                         <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>+{stats?.penaltyMinutes ?? 0}m penalty</div>

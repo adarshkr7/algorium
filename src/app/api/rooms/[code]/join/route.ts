@@ -41,6 +41,35 @@ export async function POST(
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
+    const activeRoom = await prisma.room.findFirst({
+      where: {
+        OR: [
+          { hostId: guestId },
+          { guestId: guestId },
+          { player1Id: guestId },
+          { player2Id: guestId },
+        ],
+        status: { in: ["WAITING", "IN_PROGRESS"] },
+        NOT: {
+          contest: {
+            participants: {
+              some: {
+                userId: guestId,
+                hasResigned: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (activeRoom && activeRoom.code !== uppercaseCode) {
+      return NextResponse.json(
+        { error: "You are already in another active room. Please leave it first." },
+        { status: 400 }
+      );
+    }
+
     let updateData: any = {};
     let assignedRole: string = "GUEST";
 

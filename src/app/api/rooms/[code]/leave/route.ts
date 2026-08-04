@@ -35,24 +35,57 @@ export async function POST(
           data: { hasResigned: true },
         });
 
-        // Check if all participants (host and guest) have resigned
         const participants = await prisma.participant.findMany({
           where: { contestId: room.contest.id },
         });
         
-        const allResigned = participants.length > 0 && participants.every((p) => p.hasResigned);
+        // If a player resigns, the contest ends immediately and the other player wins.
+        const quitter = participants.find(p => p.userId === userId);
+        const winner = participants.find(p => p.userId !== userId);
         
-        if (allResigned) {
-          // If both resigned, end the contest
-          await prisma.room.update({
-            where: { id: room.id },
-            data: { status: "FINISHED" },
+        const isDraw = participants.every(p => p.hasResigned);
+        
+        await prisma.room.update({
+          where: { id: room.id },
+          data: { status: "FINISHED" },
+        });
+        await prisma.contest.update({
+          where: { id: room.contest.id },
+          data: { status: "FINISHED", endTime: new Date() },
+        });
+        
+        // Update winner
+        if (!isDraw && winner) {
+          await prisma.participant.update({
+            where: { id: winner.id },
+            data: { isWinner: true },
           });
-          await prisma.contest.update({
-            where: { id: room.contest.id },
-            data: { status: "FINISHED", endTime: new Date() },
-          });
+          
+          await prisma.user.update({ where: { id: winner.userId }, data: { wins: { increment: 1 } } });
+          await prisma.user.update({ where: { id: userId }, data: { losses: { increment: 1 } } });
+        } else if (isDraw) {
+          await prisma.user.update({ where: { id: userId }, data: { draws: { increment: 1 } } });
+          if (winner) {
+            await prisma.user.update({ where: { id: winner.userId }, data: { draws: { increment: 1 } } });
+          }
         }
+
+        const supabase = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
+        );
+        const channel = supabase.channel(`room-${code}`);
+        
+        await channel.send({
+          type: 'broadcast',
+          event: 'contest-finished',
+          payload: {
+            winnerId: isDraw ? null : winner?.userId,
+            isDraw,
+            resignedUserId: userId,
+            reason: "resignation"
+          }
+        });
       }
     } else {
       // Room hasn't started yet, or finished. Anyone leaving cancels the room for everyone.

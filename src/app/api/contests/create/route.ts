@@ -32,6 +32,36 @@ export async function POST(req: Request) {
     const actualMinRating = ratings && ratings.length > 0 ? Math.min(...ratings) : Number(minRating);
     const actualMaxRating = ratings && ratings.length > 0 ? Math.max(...ratings) : Number(maxRating);
 
+    // 0. Check if user is already in an active room
+    const activeRoom = await prisma.room.findFirst({
+      where: {
+        OR: [
+          { hostId: hostId },
+          { guestId: hostId },
+          { player1Id: hostId },
+          { player2Id: hostId },
+        ],
+        status: { in: ["WAITING", "IN_PROGRESS"] },
+        NOT: {
+          contest: {
+            participants: {
+              some: {
+                userId: hostId,
+                hasResigned: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (activeRoom) {
+      return NextResponse.json(
+        { error: "You are already in an active room. Please leave it first." },
+        { status: 400 }
+      );
+    }
+
     // 1. Generate unique 6-character room code
     let code = generateRoomCode();
     let existing = await prisma.room.findUnique({ where: { code } });

@@ -61,13 +61,13 @@ function calculateStandings(contest: any, p1: any, p2: any) {
         penaltyMinutes += solveTimeMin + wrongBefore * 20;
       }
 
-      if (contest.mode === "BLITZ" && prob.lockedWinnerId === userId) {
+      if ((contest.mode === "LOCKOUT" || contest.mode === "BLITZ") && prob.lockedWinnerId === userId) {
         lockedWon++;
       }
       
       if (contest.pointingSystem === "POINTS") {
         const probPoints = (prob.indexInContest + 1) * 100;
-        if (contest.mode === "BLITZ") {
+        if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
           if (prob.lockedWinnerId === userId) points += probPoints;
         } else {
           if (acSub) points += probPoints;
@@ -190,10 +190,15 @@ export async function POST(
               },
             });
 
-            // Blitz Mode Lock Logic
-            if (contest!.mode === "BLITZ" && subVerdict === "OK") {
-              const currentUnlocked = contest!.problems.find((p) => !p.lockedWinnerId);
-              if (currentUnlocked && currentUnlocked.id === targetProblem.id) {
+            // Lockout / Blitz Mode Lock Logic
+            if ((contest!.mode === "LOCKOUT" || contest!.mode === "BLITZ") && subVerdict === "OK") {
+              const currentUnlocked = contest!.mode === "BLITZ" ? contest!.problems.find((p) => !p.lockedWinnerId) : null;
+              
+              const canLock = contest!.mode === "BLITZ" 
+                ? (currentUnlocked && currentUnlocked.id === targetProblem.id)
+                : !targetProblem.lockedWinnerId;
+
+              if (canLock) {
                 await prisma.problem.update({
                   where: { id: targetProblem.id },
                   data: { lockedWinnerId: user.id },
@@ -202,7 +207,7 @@ export async function POST(
 
                 await channel.send({
                   type: 'broadcast',
-                  event: 'blitz-problem-locked',
+                  event: contest!.mode === "BLITZ" ? 'strict-blitz-problem-locked' : 'blitz-problem-locked',
                   payload: {
                     lockedProblemId: targetProblem.id,
                     winnerHandle: user.handle,
@@ -245,10 +250,15 @@ export async function POST(
           },
         });
 
-        // Blitz Mode Lock Logic
-        if (contest!.mode === "BLITZ" && subVerdict === "OK") {
-          const currentUnlocked = contest!.problems.find((p) => !p.lockedWinnerId);
-          if (currentUnlocked && currentUnlocked.id === targetProblem.id) {
+        // Lockout / Blitz Mode Lock Logic
+        if ((contest!.mode === "LOCKOUT" || contest!.mode === "BLITZ") && subVerdict === "OK") {
+          const currentUnlocked = contest!.mode === "BLITZ" ? contest!.problems.find((p) => !p.lockedWinnerId) : null;
+          
+          const canLock = contest!.mode === "BLITZ" 
+            ? (currentUnlocked && currentUnlocked.id === targetProblem.id)
+            : !targetProblem.lockedWinnerId;
+
+          if (canLock) {
             await prisma.problem.update({
               where: { id: targetProblem.id },
               data: { lockedWinnerId: user.id },
@@ -257,7 +267,7 @@ export async function POST(
 
             await channel.send({
               type: 'broadcast',
-              event: 'blitz-problem-locked',
+              event: contest!.mode === "BLITZ" ? 'strict-blitz-problem-locked' : 'blitz-problem-locked',
               payload: {
                 lockedProblemId: targetProblem.id,
                 winnerHandle: user.handle,
@@ -286,7 +296,7 @@ export async function POST(
 
     const standings = calculateStandings(updatedContest, player1, player2);
 
-    if (updatedContest!.mode === "BLITZ") {
+    if (updatedContest!.mode === "LOCKOUT" || updatedContest!.mode === "BLITZ") {
       const allLocked = updatedContest!.problems.every((p) => p.lockedWinnerId !== null);
       if (allLocked) await finishContest(updatedContest, roomCode);
     } else if (updatedContest!.mode === "CLASSIC") {
@@ -344,7 +354,7 @@ export async function POST(
           if (p1S.penaltyMinutes < p2S.penaltyMinutes) winnerId = p1?.id;
           else if (p2S.penaltyMinutes < p1S.penaltyMinutes) winnerId = p2?.id;
         }
-      } else if (finalContestState.mode === "BLITZ") {
+      } else if (finalContestState.mode === "LOCKOUT" || finalContestState.mode === "BLITZ") {
         if (p1S.lockedWon > p2S.lockedWon) winnerId = p1?.id;
         else if (p2S.lockedWon > p1S.lockedWon) winnerId = p2?.id;
       } else {
@@ -404,7 +414,7 @@ async function finishContest(contest: any, roomCode: string) {
         else if (p2S.lastACTime > 0 && (p1S.lastACTime === 0 || p2S.lastACTime < p1S.lastACTime)) winnerId = player2.id;
       }
     }
-  } else if (contest.mode === "BLITZ") {
+  } else if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
     if (p1S.lockedWon > p2S.lockedWon) winnerId = player1.id;
     else if (p2S.lockedWon > p1S.lockedWon) winnerId = player2.id;
     else {
@@ -441,7 +451,7 @@ async function finishContest(contest: any, roomCode: string) {
 
   const isDraw = winnerId === null;
 
-  const getScore = (s: any) => contest.pointingSystem === "POINTS" ? s.points : (contest.mode === "BLITZ" ? s.lockedWon : s.acceptedCount);
+  const getScore = (s: any) => contest.pointingSystem === "POINTS" ? s.points : ((contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? s.lockedWon : s.acceptedCount);
 
   await prisma.participant.updateMany({
     where: { contestId: contest.id, userId: player1.id },

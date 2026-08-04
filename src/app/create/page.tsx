@@ -19,7 +19,7 @@ function CreateContestPageInner() {
 
   const [name, setName] = useState("Algorium Match");
   const [hostingType, setHostingType] = useState<"PLAYER_HOST" | "SUPERVISED">("PLAYER_HOST");
-  const [mode, setMode] = useState<"BLITZ" | "CLASSIC">(initialMode);
+  const [mode, setMode] = useState<"LOCKOUT" | "BLITZ" | "CLASSIC">(initialMode);
   const [pointingSystem, setPointingSystem] = useState<"ICPC" | "POINTS">("ICPC");
   const [problemCount, setProblemCount] = useState(3);
   const [durationMinutes, setDurationMinutes] = useState(30);
@@ -175,25 +175,32 @@ function CreateContestPageInner() {
                 <label style={S.label}>Mode</label>
                 <div style={{ position: "relative", display: "flex", background: "#000000", border: "none", borderRadius: "100px", padding: 6, marginBottom: 12 }}>
                   <div style={{
-                    position: "absolute", top: 6, bottom: 6, left: mode === "BLITZ" ? 6 : "calc(50% + 3px)",
-                    width: "calc(50% - 9px)", background: "#FFFFFF", borderRadius: "100px",
+                    position: "absolute", top: 6, bottom: 6, 
+                    left: mode === "LOCKOUT" ? 6 : mode === "BLITZ" ? "calc(33.33% + 4px)" : "calc(66.66% + 2px)",
+                    width: "calc(33.33% - 8px)", background: "#FFFFFF", borderRadius: "100px",
                     transition: "left 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
                   }} />
                   
+                  <button type="button" onClick={() => setMode("LOCKOUT")} 
+                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
+                             fontSize: "1rem", fontWeight: 700, color: mode === "LOCKOUT" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
+                    Lockout
+                  </button>
+                  
                   <button type="button" onClick={() => setMode("BLITZ")} 
                     style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
-                             fontSize: "1.1rem", fontWeight: 700, color: mode === "BLITZ" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
+                             fontSize: "1rem", fontWeight: 700, color: mode === "BLITZ" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s", whiteSpace: "nowrap" }}>
                     Blitz
                   </button>
                   
                   <button type="button" onClick={() => setMode("CLASSIC")} 
                     style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
-                             fontSize: "1.1rem", fontWeight: 700, color: mode === "CLASSIC" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
+                             fontSize: "1rem", fontWeight: 700, color: mode === "CLASSIC" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
                     Classic
                   </button>
                 </div>
                 <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, height: 16 }}>
-                  {mode === "BLITZ" ? "Linear race. Lock on solve." : "ICPC style with penalty time."}
+                  {mode === "LOCKOUT" ? "Free-for-all lock on solve." : mode === "BLITZ" ? "Linear race. Solved problem unlocks the next." : "ICPC style with penalty time."}
                 </p>
               </div>
 
