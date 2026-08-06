@@ -4,13 +4,10 @@ import { Flame, Trophy } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/cn";
 import { eloTier } from "@/lib/elo";
-import {
-  Avatar,
-  Badge,
-  buttonStyles,
-  EmptyState,
-  PageHeader,
-} from "@/components/ui";
+import { Avatar, Badge, EmptyState, PageHeader } from "@/components/ui";
+// This page is a server component, so buttonStyles is imported from the
+// boundary-free module rather than through the (client-heavy) barrel.
+import { buttonStyles } from "@/components/ui/button-styles";
 
 export const metadata: Metadata = { title: "Standings" };
 export const revalidate = 60;

@@ -1,5 +1,9 @@
-export { Button, buttonStyles } from "./Button";
-export type { ButtonProps, ButtonSize, ButtonVariant } from "./Button";
+export { Button } from "./Button";
+export type { ButtonProps } from "./Button";
+
+// Exported from a boundary-free module so server components can call it.
+export { buttonStyles } from "./button-styles";
+export type { ButtonSize, ButtonVariant } from "./button-styles";
 
 export { Card, SectionTitle, DataPoint } from "./Card";
 export { Badge, VerdictBadge, RatingBadge } from "./Badge";

@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { AlertTriangle, Info, CheckCircle2, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { buttonStyles } from "./Button";
+import { buttonStyles } from "./button-styles";
 
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 
