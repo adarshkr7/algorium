@@ -1,92 +1,98 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
-import { apiError, apiSuccess, validateEmail, validatePassword } from "@/lib/api-utils";
-import { createSessionToken, createSessionCookieHeader } from "@/lib/auth";
-import { rateLimit } from "@/lib/rate-limit";
+import { prisma } from "@/lib/prisma";
+import {
+  apiError,
+  apiSuccess,
+  enforceRateLimit,
+  handleUnexpected,
+  isErrorResponse,
+  parseBody,
+} from "@/lib/api-utils";
+import {
+  createSessionCookieHeader,
+  createSessionToken,
+  PUBLIC_USER_FIELDS,
+} from "@/lib/auth";
+import { RegisterSchema } from "@/lib/validation";
 
+const BCRYPT_ROUNDS = 12;
+
+/**
+ * POST /api/users/register
+ * Step 3 — set an email and password, using the token issued after the
+ * Codeforces ownership check. Signs the user in on success.
+ */
 export async function POST(req: Request) {
   try {
-    const rl = rateLimit(req as any, 5, 60 * 1000);
-    if (!rl.success) {
-      return apiError("Too many registration attempts. Please try again later.", 429);
-    }
+    const limited = enforceRateLimit(
+      req,
+      6,
+      60_000,
+      "Too many registration attempts. Please try again shortly.",
+    );
+    if (limited) return limited;
 
-    const { handle, email, password, passwordToken } = await req.json();
+    const body = await parseBody(req, RegisterSchema);
+    if (isErrorResponse(body)) return body;
 
-    if (!handle || !email || !password || !passwordToken) {
-      return apiError("Missing required fields", 400);
-    }
-
-    const emailError = validateEmail(email);
-    if (emailError) return apiError(emailError, 400);
-
-    const passwordError = validatePassword(password);
-    if (passwordError) return apiError(passwordError, 400);
-
-    const trimmedHandle = handle.trim();
-    const trimmedEmail = email.trim().toLowerCase();
-
-    // Verify the password token
     const dbUser = await prisma.user.findUnique({
-      where: { handle: trimmedHandle },
+      where: { handle: body.handle },
     });
 
-    if (!dbUser || dbUser.verificationToken !== `SET_PASSWORD_${passwordToken}`) {
-      return apiError("Invalid or expired registration token. Please verify your handle again.", 403);
+    if (
+      !dbUser ||
+      dbUser.verificationToken !== `SET_PASSWORD_${body.passwordToken}`
+    ) {
+      return apiError(
+        "That registration link is no longer valid. Verify your handle again.",
+        403,
+        { code: "INVALID_SETUP_TOKEN" },
+      );
     }
 
     if (dbUser.tokenExpiresAt && new Date() > dbUser.tokenExpiresAt) {
-      return apiError("Registration token has expired. Please verify your handle again.", 403);
+      return apiError(
+        "Your registration window expired. Verify your handle again.",
+        410,
+        { code: "SETUP_TOKEN_EXPIRED" },
+      );
     }
 
-    // Check if email is already in use by someone else
-    const existingEmail = await prisma.user.findUnique({
-      where: { email: trimmedEmail },
+    const emailOwner = await prisma.user.findUnique({
+      where: { email: body.email },
+      select: { handle: true },
     });
-
-    if (existingEmail && existingEmail.handle !== trimmedHandle) {
-      return apiError("This email is already registered to another Codeforces handle.", 409);
+    if (emailOwner && emailOwner.handle !== dbUser.handle) {
+      return apiError(
+        "That email is already linked to another Codeforces handle.",
+        409,
+        { code: "EMAIL_TAKEN" },
+      );
     }
 
-    // Hash the password
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(password, salt);
+    const passwordHash = await bcrypt.hash(body.password, BCRYPT_ROUNDS);
 
-    // Save and clear the token
-    const updatedUser = await prisma.user.update({
-      where: { handle: trimmedHandle },
+    const user = await prisma.user.update({
+      where: { handle: dbUser.handle },
       data: {
-        email: trimmedEmail,
+        email: body.email,
         passwordHash,
         verificationToken: null,
         tokenExpiresAt: null,
+        lastSeenAt: new Date(),
       },
+      select: PUBLIC_USER_FIELDS,
     });
 
-    // Create session token
     const token = await createSessionToken({
-      userId: updatedUser.id,
-      handle: updatedUser.handle,
+      userId: user.id,
+      handle: user.handle,
     });
 
-    const response = apiSuccess({
-      user: {
-        id: updatedUser.id,
-        handle: updatedUser.handle,
-        avatar: updatedUser.avatar,
-        rating: updatedUser.rating,
-        maxRating: updatedUser.maxRating,
-        rank: updatedUser.rank,
-        maxRank: updatedUser.maxRank,
-      }
+    return apiSuccess({ user }, 200, {
+      "Set-Cookie": createSessionCookieHeader(token),
     });
-
-    response.headers.set("Set-Cookie", createSessionCookieHeader(token));
-    return response;
-
-  } catch (error: any) {
-    console.error("Registration error:", error);
-    return apiError("Internal server error", 500);
+  } catch (error) {
+    return handleUnexpected("users/register", error);
   }
 }

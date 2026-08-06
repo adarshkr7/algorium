@@ -1,106 +1,128 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { fetchCFUserInfo } from "@/lib/codeforces";
-import { apiError, apiSuccess } from "@/lib/api-utils";
 import crypto from "crypto";
+import { prisma } from "@/lib/prisma";
+import {
+  fetchCFUserInfo,
+  fetchCFUserSubmissionsStrict,
+} from "@/lib/codeforces";
+import {
+  apiError,
+  apiSuccess,
+  enforceRateLimit,
+  handleUnexpected,
+  isErrorResponse,
+  parseBody,
+} from "@/lib/api-utils";
+import { LoginVerifySchema } from "@/lib/validation";
+
+/** The compilation error must be recent, so an old one can't be replayed. */
+const SUBMISSION_WINDOW_SECONDS = 5 * 60;
+const PASSWORD_SETUP_TTL_MS = 15 * 60 * 1000;
 
 /**
  * POST /api/users/login/verify
- * Step 2: Re-fetch the user's CF profile and check that firstName matches the token.
- * If it does, clear the token and return the full user object (session granted).
+ * Step 2 — look for a fresh COMPILATION_ERROR on the assigned problem. On
+ * success, issue a short-lived token that authorises setting a password.
  */
 export async function POST(req: Request) {
   try {
-    const { handle } = await req.json();
-    if (!handle || typeof handle !== "string" || !handle.trim()) {
-      return apiError("Handle is required", 400);
+    const limited = enforceRateLimit(
+      req,
+      15,
+      60_000,
+      "Too many verification attempts. Wait a moment before retrying.",
+    );
+    if (limited) return limited;
+
+    const body = await parseBody(req, LoginVerifySchema);
+    if (isErrorResponse(body)) return body;
+
+    const handle = body.handle;
+
+    const dbUser = await prisma.user.findUnique({ where: { handle } });
+    if (!dbUser?.verificationToken || !dbUser.tokenExpiresAt) {
+      return apiError(
+        "No pending verification for this handle. Start the login again.",
+        409,
+        { code: "NO_PENDING_VERIFICATION" },
+      );
     }
 
-    const trimmedHandle = handle.trim();
-
-    // Look up the pending token from the DB
-    const dbUser = await prisma.user.findUnique({ where: { handle: trimmedHandle } });
-
-    if (!dbUser || !dbUser.verificationToken || !dbUser.tokenExpiresAt) {
-      return apiError("No pending verification found. Please restart the login process.", 400);
-    }
-
-    // Check token expiry
     if (new Date() > dbUser.tokenExpiresAt) {
       await prisma.user.update({
-        where: { handle: trimmedHandle },
+        where: { handle },
         data: { verificationToken: null, tokenExpiresAt: null },
       });
-      return apiError("Verification token has expired (10-minute limit). Please start again.", 400);
+      return apiError(
+        "That verification window expired. Start the login again.",
+        410,
+        { code: "VERIFICATION_EXPIRED" },
+      );
     }
 
-    // Re-fetch CF profile to check avatar/rating updates
-    const cfUser = await fetchCFUserInfo(trimmedHandle);
-    if (!cfUser) {
-      return apiError("Could not reach Codeforces API. Try again.", 502);
+    const target = dbUser.verificationToken.match(/^(\d+)([A-Z]+)$/);
+    if (!target) {
+      return apiError(
+        "Verification is in an unexpected state. Start the login again.",
+        409,
+        { code: "BAD_TOKEN_FORMAT" },
+      );
+    }
+    const targetContestId = Number(target[1]);
+    const targetIndex = target[2];
+
+    let submissions;
+    try {
+      submissions = await fetchCFUserSubmissionsStrict(handle, 20);
+    } catch (error) {
+      console.error("[users/login/verify] CF unreachable:", error);
+      return apiError(
+        "Couldn't reach Codeforces just now. Wait a few seconds and press Verify again.",
+        503,
+        { code: "CF_UNAVAILABLE" },
+      );
     }
 
-    // Fetch the user's recent submissions
-    const cfRawRes = await fetch(
-      `https://codeforces.com/api/user.status?handle=${encodeURIComponent(trimmedHandle)}&from=1&count=15`,
-      { cache: "no-store" }
-    );
-    const cfRaw = await cfRawRes.json();
-
-    if (cfRaw.status !== "OK" || !cfRaw.result) {
-      return apiError(`Codeforces API Error: ${cfRaw.comment || "Could not fetch submissions"}. Please wait a few seconds and try again.`, 502);
-    }
-
-    const submissions = cfRaw.result;
-    
-    // The token is a problem ID like "4A" or "158A"
-    const targetProblem = dbUser.verificationToken;
-    const match = targetProblem.match(/^(\d+)([A-Z]+)$/);
-    if (!match) {
-      return apiError("Invalid verification token format.", 500);
-    }
-    const targetContestId = parseInt(match[1]);
-    const targetIndex = match[2];
-    
-    const fiveMinutesAgo = Math.floor(Date.now() / 1000) - (5 * 60);
-    
-    // Verify a matching submission exists
-    const hasValidSubmission = submissions.some((sub: any) => {
-      return (
+    const cutoff = Math.floor(Date.now() / 1000) - SUBMISSION_WINDOW_SECONDS;
+    const proven = submissions.some(
+      (sub) =>
         sub.verdict === "COMPILATION_ERROR" &&
         sub.problem?.contestId === targetContestId &&
         sub.problem?.index === targetIndex &&
-        sub.creationTimeSeconds >= fiveMinutesAgo
-      );
-    });
+        sub.creationTimeSeconds >= cutoff,
+    );
 
-    if (!hasValidSubmission) {
+    if (!proven) {
       return apiError(
-        `Could not find a recent COMPILATION ERROR for problem ${targetProblem}. ` +
-          "Make sure you submit invalid code to the correct problem, and try clicking Verify again.",
-        403
+        `No recent compilation error found on problem ${dbUser.verificationToken}. ` +
+          "Submit invalid code to that exact problem, wait for the verdict, then press Verify.",
+        403,
+        { code: "PROOF_NOT_FOUND" },
       );
     }
 
+    // Refresh the cached CF profile while we're here.
+    const cfUser = await fetchCFUserInfo(handle);
     const passwordToken = crypto.randomUUID();
 
-    // ✅ Ownership verified — update profile, issue a password setup token
     await prisma.user.update({
-      where: { handle: trimmedHandle },
+      where: { handle },
       data: {
-        avatar: cfUser.avatar,
-        rating: cfUser.rating,
-        maxRating: cfUser.maxRating,
-        rank: cfUser.rank,
-        maxRank: cfUser.maxRank,
+        ...(cfUser
+          ? {
+              avatar: cfUser.avatar,
+              rating: cfUser.rating,
+              maxRating: cfUser.maxRating,
+              rank: cfUser.rank,
+              maxRank: cfUser.maxRank,
+            }
+          : {}),
         verificationToken: `SET_PASSWORD_${passwordToken}`,
-        tokenExpiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 mins to set password
+        tokenExpiresAt: new Date(Date.now() + PASSWORD_SETUP_TTL_MS),
       },
     });
 
-    return apiSuccess({ step: "register", passwordToken, handle: trimmedHandle });
-  } catch (error: any) {
-    console.error("Login verify error:", error);
-    return apiError("Internal server error", 500);
+    return apiSuccess({ step: "register", passwordToken, handle });
+  } catch (error) {
+    return handleUnexpected("users/login/verify", error);
   }
 }

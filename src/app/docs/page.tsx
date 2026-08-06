@@ -1,292 +1,305 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Book, Swords, Zap, Users, Trophy, ChevronRight, CheckCircle2, ShieldAlert } from "lucide-react";
+import {
+  Book,
+  ChevronRight,
+  Globe,
+  RotateCcw,
+  Shield,
+  Swords,
+  Target,
+  Trophy,
+  Users,
+  Zap,
+} from "lucide-react";
+import { cn } from "@/lib/cn";
+import { Badge, buttonStyles, Card, SectionTitle } from "@/components/ui";
+
+const SECTIONS = [
+  { id: "intro", label: "Getting started", icon: Book },
+  { id: "modes", label: "Game modes", icon: Swords },
+  { id: "scoring", label: "Scoring", icon: Zap },
+  { id: "rooms", label: "Rooms & formats", icon: Users },
+  { id: "series", label: "Series & rematches", icon: RotateCcw },
+  { id: "ladder", label: "Elo ladder", icon: Trophy },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]["id"];
 
 export default function DocsPage() {
-  const [activeSection, setActiveSection] = useState("intro");
+  const [active, setActive] = useState<SectionId>("intro");
 
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            setActiveSection(entry.target.id);
-          }
-        });
+        for (const entry of entries) {
+          if (entry.isIntersecting) setActive(entry.target.id as SectionId);
+        }
       },
-      { rootMargin: "-20% 0px -80% 0px" } // trigger when near top
+      { rootMargin: "-25% 0px -70% 0px" },
     );
 
-    document.querySelectorAll("section[id]").forEach((section) => {
-      observer.observe(section);
-    });
+    document
+      .querySelectorAll("section[id]")
+      .forEach((section) => observer.observe(section));
 
     return () => observer.disconnect();
   }, []);
 
-  const navItems = [
-    { id: "intro", label: "Introduction", icon: <Book style={{ width: 16, height: 16 }} /> },
-    { id: "modes", label: "Game Modes", icon: <Swords style={{ width: 16, height: 16 }} /> },
-    { id: "scoring", label: "Scoring Systems", icon: <Zap style={{ width: 16, height: 16 }} /> },
-    { id: "rooms", label: "Rooms & Spectating", icon: <Users style={{ width: 16, height: 16 }} /> },
-    { id: "standings", label: "Standings & Ratings", icon: <Trophy style={{ width: 16, height: 16 }} /> },
-  ];
-
   const scrollTo = (id: string) => {
     const el = document.getElementById(id);
-    if (el) {
-      const y = el.getBoundingClientRect().top + window.scrollY - 100;
-      window.scrollTo({ top: y, behavior: "smooth" });
-    }
+    if (!el) return;
+    window.scrollTo({
+      top: el.getBoundingClientRect().top + window.scrollY - 96,
+      behavior: "smooth",
+    });
   };
 
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", gap: 40, alignItems: "flex-start", padding: "40px 20px" }}>
-      
-      {/* Sidebar Navigation */}
-      <nav style={{
-        position: "sticky",
-        top: 100,
-        width: 260,
-        flexShrink: 0,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }} className="hidden md:flex">
-        <div style={{ marginBottom: 16, paddingLeft: 16 }}>
-          <h2 style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-            Documentation
-          </h2>
-        </div>
-        
-        {navItems.map((item) => (
+    <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-12">
+      {/* ── Section nav ───────────────────────────────────────────────────── */}
+      {/* Horizontal scroller on mobile, sticky sidebar on desktop. */}
+      <nav className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 lg:sticky lg:top-24 lg:mx-0 lg:w-56 lg:shrink-0 lg:flex-col lg:overflow-visible lg:px-0">
+        {SECTIONS.map((section) => (
           <button
-            key={item.id}
-            onClick={() => scrollTo(item.id)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-              padding: "12px 16px",
-              borderRadius: "12px",
-              background: activeSection === item.id ? "rgba(255,255,255,0.05)" : "transparent",
-              color: activeSection === item.id ? "#FFFFFF" : "var(--text-secondary)",
-              border: "none",
-              cursor: "pointer",
-              textAlign: "left",
-              fontWeight: activeSection === item.id ? 700 : 500,
-              fontSize: "0.95rem",
-              transition: "all 0.2s",
-            }}
+            key={section.id}
+            type="button"
+            onClick={() => scrollTo(section.id)}
+            className={cn(
+              "flex shrink-0 cursor-pointer items-center gap-2.5 rounded-full border-0 px-4 py-2.5 text-[0.83rem] font-semibold whitespace-nowrap transition-colors lg:w-full lg:justify-between lg:rounded-md",
+              active === section.id
+                ? "bg-white/8 text-ink"
+                : "bg-transparent text-ink-dim hover:text-ink",
+            )}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ color: activeSection === item.id ? "var(--accent)" : "var(--text-muted)" }}>
-                {item.icon}
-              </span>
-              {item.label}
-            </div>
-            {activeSection === item.id && <ChevronRight style={{ width: 14, height: 14, color: "var(--text-muted)" }} />}
+            <span className="flex items-center gap-2.5">
+              <section.icon className="size-4" />
+              {section.label}
+            </span>
+            <ChevronRight
+              className={cn(
+                "hidden size-3.5 lg:block",
+                active === section.id ? "opacity-100" : "opacity-0",
+              )}
+            />
           </button>
         ))}
       </nav>
 
-      {/* Main Content Area */}
-      <main style={{ flex: 1, display: "flex", flexDirection: "column", gap: 80, paddingBottom: 100 }}>
-        
-        {/* Intro */}
-        <section id="intro" style={{ scrollMarginTop: 100 }}>
-          <div style={{ marginBottom: 32 }}>
-            <h1 style={{ fontSize: "3rem", fontWeight: 800, color: "#FFFFFF", letterSpacing: "-0.03em", marginBottom: 16 }}>
-              Welcome to Algorium, Twin 💅
-            </h1>
-            <p style={{ fontSize: "1.15rem", color: "var(--text-secondary)", lineHeight: 1.6, maxWidth: 700 }}>
-              Algorium is the GOAT of real-time 1v1 platforms, built on top of Codeforces. No cap, it's time to crash out against your opps in intense programming duels, looksmax your rating on the global leaderboard, and flex that you're him (or her, very demure). 
-            </p>
-          </div>
-          <div style={{ background: "rgba(255,255,255,0.02)", padding: 32, borderRadius: 24 }}>
-            <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "#FFFFFF", marginBottom: 16 }}>Soft Launching Your Account</h3>
-            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 16 }}>
-              <li style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                <CheckCircle2 style={{ width: 20, height: 20, color: "var(--success)", flexShrink: 0, marginTop: 2 }} />
-                <div>
-                  <strong style={{ color: "#FFF" }}>To Start:</strong>
-                  <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.5 }}>
-                    Click "Sign In with CF" in the top right. We use a compilation error verification method to get the receipts and securely prove you actually own the handle. Fr fr.
-                  </p>
-                </div>
-              </li>
-              <li style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                <CheckCircle2 style={{ width: 20, height: 20, color: "var(--success)", flexShrink: 0, marginTop: 2 }} />
-                <div>
-                  <strong style={{ color: "#FFF" }}>Verification:</strong>
-                  <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.5 }}>
-                    First time? You gotta verify your identity by submitting a script that hits a Compilation Error for a specified problem. After that, you can set your email and password. It's a canon event.
-                  </p>
-                </div>
-              </li>
-              <li style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                <CheckCircle2 style={{ width: 20, height: 20, color: "var(--success)", flexShrink: 0, marginTop: 2 }} />
-                <div>
-                  <strong style={{ color: "#FFF" }}>Womp Womp:</strong>
-                  <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.5 }}>
-                    Brainrot got you forgetting your password? Big yikes. Just click "Forgot Password?". You'll have to repeat the Codeforces verification to prove you aren't an NPC trying to steal an account.
-                  </p>
-                </div>
-              </li>
-              <li style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                <CheckCircle2 style={{ width: 20, height: 20, color: "var(--success)", flexShrink: 0, marginTop: 2 }} />
-                <div>
-                  <strong style={{ color: "#FFF" }}>LFG:</strong>
-                  <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.5 }}>
-                    Host a duel from the homepage and drop your 6-character room code, or paste your bro's code to jump into their lobby. Say less!
-                  </p>
-                </div>
-              </li>
-            </ul>
-          </div>
-        </section>
-
-        {/* Game Modes */}
-        <section id="modes" style={{ scrollMarginTop: 100 }}>
-          <h2 style={{ fontSize: "2rem", fontWeight: 800, color: "#FFFFFF", letterSpacing: "-0.02em", marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
-            <Swords style={{ color: "var(--accent)" }} />
-            Aesthetic
-          </h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            <div style={{ background: "rgba(255,255,255,0.02)", padding: 32, borderRadius: 24, border: "1px solid rgba(59,130,246,0.2)" }}>
-              <h3 style={{ fontSize: "1.4rem", fontWeight: 800, color: "#FFFFFF", marginBottom: 12 }}>Type Shi</h3>
-              <p style={{ color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 16 }}>
-                The traditional competitive programming experience. Both players have access to all problems from the jump. You can cook them in any order you choose. Valid.
-              </p>
-              <ul style={{ color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.6, paddingLeft: 20 }}>
-                <li>Strategy is key: dive into hard problems first for massive points, or sweep the easy ones to build a lead (Boy math).</li>
-                <li>The winner is determined only when the contest timer expires. Standing on business!</li>
-              </ul>
-            </div>
-
-            <div style={{ background: "rgba(255,255,255,0.02)", padding: 32, borderRadius: 24, border: "1px solid rgba(34,197,94,0.2)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                <h3 style={{ fontSize: "1.4rem", fontWeight: 800, color: "#FFFFFF", margin: 0 }}>Lockout Mode</h3>
-                <span style={{ padding: "4px 10px", background: "rgba(34,197,94,0.1)", color: "var(--success)", borderRadius: 100, fontSize: "0.75rem", fontWeight: 800, textTransform: "uppercase" }}>Free for All</span>
-              </div>
-              <p style={{ color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 16 }}>
-                A wild free-for-all race where any problem can be attempted at any time. <strong>The first player to solve a problem locks it</strong>, leaving the opponent cooked and unable to submit.
-              </p>
-              <ul style={{ color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.6, paddingLeft: 20 }}>
-                <li>Solve problems in any order to secure points and ratio your opponent.</li>
-                <li>Keep an eye on what your opponent is working on! (Very mindful, very demure).</li>
-                <li>The contest ends when all problems are locked or the timer expires.</li>
-              </ul>
-            </div>
-
-            <div style={{ background: "rgba(255,255,255,0.02)", padding: 32, borderRadius: 24, border: "1px solid rgba(234,179,8,0.2)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                <h3 style={{ fontSize: "1.4rem", fontWeight: 800, color: "#FFFFFF", margin: 0 }}>Blitz Mode</h3>
-                <span style={{ padding: "4px 10px", background: "rgba(234,179,8,0.1)", color: "var(--warning)", borderRadius: 100, fontSize: "0.75rem", fontWeight: 800, textTransform: "uppercase" }}>Sweaty</span>
-              </div>
-              <p style={{ color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 16 }}>
-                A relentless, sequential race. Both players start on Problem A. <strong>The first player to solve it locks it for the opponent</strong>, scoring the points. Both players are then immediately forced onto Problem B. Zero plot armor.
-              </p>
-              <ul style={{ color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.6, paddingLeft: 20 }}>
-                <li>You cannot skip ahead or go back to previous problems. It's giving linear progression.</li>
-                <li>If your opponent solves the problem while you are debugging, you fumbled and lose out on those points entirely.</li>
-                <li>Fastest fingers win. Perfect for short, sweaty duels. Let him cook!</li>
-              </ul>
-            </div>
-          </div>
-        </section>
-
-        {/* Scoring */}
-        <section id="scoring" style={{ scrollMarginTop: 100 }}>
-          <h2 style={{ fontSize: "2rem", fontWeight: 800, color: "#FFFFFF", letterSpacing: "-0.02em", marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
-            <Zap style={{ color: "var(--accent)" }} />
-            Girl Math
-          </h2>
-          <p style={{ fontSize: "1.05rem", color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 32 }}>
-            When creating a duel, the host can choose between two different scoring metrics that determine how the winner is calculated. It's giving options.
+      {/* ── Content ───────────────────────────────────────────────────────── */}
+      <div className="flex min-w-0 flex-1 flex-col gap-12">
+        <section id="intro" className="flex flex-col gap-4 scroll-mt-24">
+          <h1 className="text-display-sm text-ink">How Algorium works</h1>
+          <p className="text-base leading-relaxed text-ink-dim">
+            Algorium turns Codeforces into a head-to-head game. You pick the
+            rules, we pick problems neither player has solved, and the
+            scoreboard updates itself by watching your public submissions.
           </p>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-            <div style={{ background: "rgba(255,255,255,0.02)", padding: 32, borderRadius: 24 }}>
-              <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "#FFFFFF", marginBottom: 12 }}>Points System</h3>
-              <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.6 }}>
-                Problems are assigned escalating point values based on their Codeforces rating/difficulty (e.g., 100, 200, 300, 400).
-                <br /><br />
-                Solving harder problems rewards significantly more points (bussin!). The player with the most total points at the end gets the W.
-              </p>
-            </div>
-            <div style={{ background: "rgba(255,255,255,0.02)", padding: 32, borderRadius: 24 }}>
-              <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "#FFFFFF", marginBottom: 12 }}>Accepted (AC) Count</h3>
-              <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.6 }}>
-                Every problem is worth exactly 1 point, regardless of its difficulty.
-                <br /><br />
-                The player who solves the most problems overall wins. This mode favors speed and consistency across the board. TBH it's peak for tryhards.
-              </p>
-            </div>
-          </div>
+          <Card className="flex flex-col gap-4">
+            <SectionTitle>The loop</SectionTitle>
+            <ol className="flex flex-col gap-3 text-[0.9rem] leading-relaxed text-ink-dim">
+              <li>
+                <strong className="text-ink">1. Sign in.</strong> Prove you own
+                your Codeforces handle by submitting deliberately broken code to
+                an assigned problem. We look for the compilation error — only
+                the real account owner can produce one.
+              </li>
+              <li>
+                <strong className="text-ink">2. Host or join.</strong> Configure
+                a room and share the 6-character code, or make it public and let
+                anyone join from the home page.
+              </li>
+              <li>
+                <strong className="text-ink">3. Solve on Codeforces.</strong>{" "}
+                Problems open there as normal. Submit with your own account.
+              </li>
+              <li>
+                <strong className="text-ink">4. Watch the board.</strong>{" "}
+                Verdicts are picked up within seconds and pushed live to both
+                players.
+              </li>
+            </ol>
+          </Card>
 
-          <div style={{ marginTop: 24, display: "flex", gap: 16, background: "rgba(239,68,68,0.05)", padding: 24, borderRadius: 16 }}>
-            <ShieldAlert style={{ width: 24, height: 24, color: "var(--danger)", flexShrink: 0 }} />
-            <div>
-              <h4 style={{ margin: "0 0 8px", color: "var(--danger)", fontWeight: 700 }}>Big Yikes</h4>
-              <p style={{ margin: 0, color: "var(--text-muted)", fontSize: "0.9rem", lineHeight: 1.6 }}>
-                If both players end up with the same Score (or same AC count), the winner is determined by <strong>Penalty Time</strong>.
-                Your penalty is the sum of the time (in minutes) it took you to solve each problem. Furthermore, every incorrect submission you made prior to a successful solve adds a flat <strong>20-minute penalty</strong> to your time! Massive L.
-              </p>
-            </div>
+          <Link
+            href="/create"
+            className={buttonStyles({ variant: "primary", className: "self-start" })}
+          >
+            Create your first duel
+          </Link>
+        </section>
+
+        <section id="modes" className="flex flex-col gap-4 scroll-mt-24">
+          <h2 className="text-2xl font-extrabold text-ink">Game modes</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ModeCard
+              icon={Target}
+              name="Lockout"
+              summary="Every problem is open from the start. The first accepted solution claims that problem permanently — your opponent can no longer score it."
+              best="Best for: a broad race where you can cherry-pick what you're good at."
+            />
+            <ModeCard
+              icon={Zap}
+              name="Blitz"
+              summary="A strictly linear race. Only the current problem is available; solving it locks it and opens the next one for both players."
+              best="Best for: fast, tense games where speed matters more than breadth."
+            />
+            <ModeCard
+              icon={Shield}
+              name="Classic"
+              summary="Both players can solve everything. Most problems solved wins, with penalty time breaking ties — standard ICPC rules."
+              best="Best for: a fair test of total output over the full duration."
+            />
           </div>
         </section>
 
-        {/* Rooms & Spectating */}
-        <section id="rooms" style={{ scrollMarginTop: 100 }}>
-          <h2 style={{ fontSize: "2rem", fontWeight: 800, color: "#FFFFFF", letterSpacing: "-0.02em", marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
-            <Users style={{ color: "var(--accent)" }} />
-            Main Character Energy
-          </h2>
-          <div style={{ background: "rgba(255,255,255,0.02)", padding: 32, borderRadius: 24 }}>
-            <p style={{ color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 24 }}>
-              Algorium is built to be social. Every duel takes place inside a dedicated "Room" which handles matchmaking, real-time codeforces sync, and live UI updates. Fr.
+        <section id="scoring" className="flex flex-col gap-4 scroll-mt-24">
+          <h2 className="text-2xl font-extrabold text-ink">Scoring</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Card className="flex flex-col gap-3">
+              <Badge tone="neutral">ICPC</Badge>
+              <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+                Your score is the number of problems solved. Penalty time is the
+                minutes elapsed at each solve, plus 20 minutes for every wrong
+                submission that came before it. Lower penalty wins ties.
+              </p>
+            </Card>
+            <Card className="flex flex-col gap-3">
+              <Badge tone="success">Points</Badge>
+              <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+                Problems are worth 100, 200, 300… by position, so the harder
+                later problems are worth chasing. Penalty time still breaks
+                ties.
+              </p>
+            </Card>
+          </div>
+          <Card>
+            <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+              <strong className="text-ink">Tie-breaks</strong>, in order:
+              primary score, then total penalty, then whoever finished their
+              last accepted solution earliest. If everything ties, it&apos;s a
+              draw.
             </p>
-            
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <div>
-                <strong style={{ color: "#FFF", fontSize: "1.1rem" }}>Hard Launching your Room</strong>
-                <p style={{ color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
-                  Once you create a match, you'll be placed in a waiting lobby. A unique 6-character code (e.g. <code>X7B9K2</code>) will be generated. Send this code to your opp.
-                </p>
-              </div>
-              <div>
-                <strong style={{ color: "#FFF", fontSize: "1.1rem" }}>Spectator Mode</strong>
-                <p style={{ color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
-                  Anyone else who enters your room code will automatically join as a spectator (total NPC energy). Spectators get a live POV of the arena scoreboard, remaining time, and real-time popups whenever a player submits a solution or locks a problem. We listen and we don't judge.
-                </p>
-              </div>
-            </div>
-          </div>
+          </Card>
         </section>
 
-        {/* Standings */}
-        <section id="standings" style={{ scrollMarginTop: 100 }}>
-          <h2 style={{ fontSize: "2rem", fontWeight: 800, color: "#FFFFFF", letterSpacing: "-0.02em", marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
-            <Trophy style={{ color: "var(--accent)" }} />
-            Aura Farming
-          </h2>
-          <div style={{ background: "rgba(255,255,255,0.02)", padding: 32, borderRadius: 24 }}>
-            <p style={{ color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 24 }}>
-              Just like Codeforces, Algorium features a rating system to measure your rizz in 1v1 formats.
+        <section id="rooms" className="flex flex-col gap-4 scroll-mt-24">
+          <h2 className="text-2xl font-extrabold text-ink">Rooms & formats</h2>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Card className="flex flex-col gap-2.5">
+              <Swords className="size-5 text-ink-dim" />
+              <h3 className="font-bold text-ink">Play</h3>
+              <p className="text-[0.85rem] leading-relaxed text-ink-faint">
+                You host and compete. The first person to join is your opponent.
+              </p>
+            </Card>
+            <Card className="flex flex-col gap-2.5">
+              <Users className="size-5 text-ink-dim" />
+              <h3 className="font-bold text-ink">Supervise</h3>
+              <p className="text-[0.85rem] leading-relaxed text-ink-faint">
+                You host but don&apos;t play. The first two people to join are
+                the contestants — useful for club matches.
+              </p>
+            </Card>
+            <Card className="flex flex-col gap-2.5">
+              <Target className="size-5 text-ink-dim" />
+              <h3 className="font-bold text-ink">Practice</h3>
+              <p className="text-[0.85rem] leading-relaxed text-ink-faint">
+                A solo timed run against the clock. Nothing is rated and no
+                match history is recorded.
+              </p>
+            </Card>
+          </div>
+          <Card className="flex items-start gap-3">
+            <Globe className="mt-0.5 size-4 shrink-0 text-ink-faint" />
+            <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+              Toggle <strong className="text-ink">list in open duels</strong> to
+              publish your room on the home page so strangers can join. Leave it
+              off and only people with the code can get in.
             </p>
-            <ul style={{ color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.6, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 12 }}>
-              <li><strong>Rating Formula:</strong> We use an Elo-based system. Defeating higher-rated players grants more rating points than defeating lower-rated ones (Fanum tax).</li>
-              <li><strong>Ranks:</strong> Your rank title updates automatically as your rating grows. Try to achieve the legendary <span style={{ color: "var(--danger)", fontWeight: 700 }}>Grandmaster</span> status and leave no crumbs!</li>
-              <li><strong>Global Standings:</strong> Check the <code>/standings</code> page to see the GOATED duelists on the platform, ranked primarily by Wins, then by Rating. Highkey insane.</li>
-            </ul>
-          </div>
+          </Card>
         </section>
 
-      </main>
+        <section id="series" className="flex flex-col gap-4 scroll-mt-24">
+          <h2 className="text-2xl font-extrabold text-ink">
+            Series & rematches
+          </h2>
+          <Card className="flex flex-col gap-3">
+            <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+              When you host, you can make it a{" "}
+              <strong className="text-ink">best of 3 or 5</strong>. Each game is
+              its own room with a fresh problem set; the series score follows
+              you across them and the first player to take the majority wins it.
+            </p>
+            <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+              After any duel, either player can hit{" "}
+              <strong className="text-ink">Rematch</strong>. That creates a new
+              room with identical settings and new problems, and sends the other
+              player an invite. Inside a series, Rematch becomes{" "}
+              <strong className="text-ink">Play next game</strong>.
+            </p>
+          </Card>
+        </section>
+
+        <section id="ladder" className="flex flex-col gap-4 scroll-mt-24">
+          <h2 className="text-2xl font-extrabold text-ink">Elo ladder</h2>
+          <Card className="flex flex-col gap-3">
+            <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+              Every rated duel moves your Algorium Elo. It starts at{" "}
+              <strong className="text-ink">1200</strong> and is completely
+              separate from your Codeforces rating — beating someone stronger
+              than you is worth more than beating someone weaker.
+            </p>
+            <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+              Your first ten duels are provisional and move the number faster
+              while it finds your level. Resigning counts as a loss. Solo
+              practice never affects it.
+            </p>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              <Badge tone="danger">Grandmaster 2200+</Badge>
+              <Badge tone="warning">Master 1900+</Badge>
+              <Badge tone="info">Expert 1600+</Badge>
+              <Badge tone="success">Specialist 1400+</Badge>
+              <Badge tone="neutral">Challenger 1200+</Badge>
+            </div>
+          </Card>
+          <Link
+            href="/standings"
+            className={buttonStyles({
+              variant: "secondary",
+              className: "self-start",
+            })}
+          >
+            View the standings
+          </Link>
+        </section>
+      </div>
     </div>
+  );
+}
+
+function ModeCard({
+  icon: Icon,
+  name,
+  summary,
+  best,
+}: {
+  icon: React.ElementType;
+  name: string;
+  summary: string;
+  best: string;
+}) {
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="flex items-center gap-2.5">
+        <Icon className="size-5 text-ink-dim" />
+        <h3 className="text-lg font-bold text-ink">{name}</h3>
+      </div>
+      <p className="text-[0.88rem] leading-relaxed text-ink-dim">{summary}</p>
+      <p className="text-[0.78rem] leading-relaxed text-ink-faint">{best}</p>
+    </Card>
   );
 }

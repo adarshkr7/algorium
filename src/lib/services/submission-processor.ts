@@ -1,105 +1,160 @@
 import { prisma } from "@/lib/prisma";
+import type { CFSubmission } from "@/lib/codeforces";
 import { BroadcastService } from "./broadcast";
 
+interface ProcessableUser {
+  id: string;
+  handle: string;
+}
+
+interface ProcessableProblem {
+  id: string;
+  problemKey: string;
+  indexInContest: number;
+  lockedWinnerId: string | null;
+}
+
+interface ProcessableContest {
+  id: string;
+  mode: string;
+  startTime: Date | string | null;
+  endTime: Date | string | null;
+  durationMinutes: number;
+  problems: ProcessableProblem[];
+}
+
+/** Normalises a Codeforces submission into our "1800-A" problem key. */
+function submissionProblemKey(sub: CFSubmission): string | null {
+  const contestId = sub.problem?.contestId ?? sub.contestId;
+  const index = sub.problem?.index;
+  if (!contestId || !index) return null;
+  return `${contestId}-${String(index).trim().toUpperCase()}`;
+}
+
+/**
+ * Ingests a player's recent Codeforces submissions into the contest.
+ *
+ * Only submissions created inside the contest window and matching one of the
+ * contest problems are stored. Writes are idempotent via the
+ * `@@unique([contestId, cfSubmissionId])` constraint, because the evaluate API
+ * route and the background worker frequently process the same submission at
+ * the same time — that race previously produced duplicate rows, which inflated
+ * penalty counts.
+ *
+ * @returns number of rows created or transitioned out of TESTING.
+ */
 export async function processUserSubs(
-  user: any,
-  subs: any[],
-  contest: any,
-  existingSubsMap: Map<number, any>,
-  broadcaster: BroadcastService
+  user: ProcessableUser | null | undefined,
+  subs: CFSubmission[] | null | undefined,
+  contest: ProcessableContest,
+  existingSubsMap: Map<number, { id: string; verdict: string }>,
+  broadcaster: BroadcastService,
 ): Promise<number> {
-  if (!user || !subs) return 0;
-  
-  let newSubmissionsCount = 0;
+  if (!user || !subs?.length || !contest.startTime) return 0;
+
   const startTime = new Date(contest.startTime);
-  const durationMs = contest.durationMinutes * 60 * 1000;
-  const endTime = contest.endTime || new Date(startTime.getTime() + durationMs);
+  const endTime = contest.endTime
+    ? new Date(contest.endTime)
+    : new Date(startTime.getTime() + contest.durationMinutes * 60 * 1000);
+
+  let changed = 0;
 
   for (const sub of subs) {
-    if (!sub.id) continue;
+    if (!sub?.id) continue;
 
-    const subTime = new Date(sub.creationTimeSeconds * 1000);
-    if (subTime < startTime || subTime > endTime) continue;
+    const submittedAt = new Date(sub.creationTimeSeconds * 1000);
+    if (submittedAt < startTime || submittedAt > endTime) continue;
 
-    if (!sub.problem || !sub.problem.contestId || !sub.problem.index) continue;
-    const formattedIndex = String(sub.problem.index).trim().toUpperCase();
-    const key = `${sub.problem.contestId}-${formattedIndex}`;
-    const targetProblem = contest.problems.find((p: any) => p.problemKey === key);
+    const key = submissionProblemKey(sub);
+    if (!key) continue;
 
-    if (!targetProblem) continue;
+    const problem = contest.problems.find((p) => p.problemKey === key);
+    if (!problem) continue;
 
-    const solveTimeSec = Math.max(0, Math.floor((subTime.getTime() - startTime.getTime()) / 1000));
-    const subVerdict = sub.verdict || "TESTING";
+    const verdict = sub.verdict || "TESTING";
+    const solveTimeSeconds = Math.max(
+      0,
+      Math.floor((submittedAt.getTime() - startTime.getTime()) / 1000),
+    );
 
-    const existingSub = existingSubsMap.get(sub.id);
+    const existing = existingSubsMap.get(sub.id);
 
-    if (existingSub) {
-      if (existingSub.verdict === "TESTING" && subVerdict !== "TESTING") {
-        const updatedSub = await prisma.submission.update({
-          where: { id: existingSub.id },
-          data: {
-            verdict: subVerdict,
-            passedTestCount: sub.passedTestCount || 0,
-            solveTimeSeconds: subVerdict === "OK" ? solveTimeSec : null,
-          },
-          include: { user: true, problem: true },
-        });
-
-        existingSubsMap.set(sub.id, updatedSub);
-        newSubmissionsCount++;
-
-        await broadcaster.broadcastSubmission(updatedSub);
-        await processLockoutLogic(contest, targetProblem, subVerdict, user, broadcaster);
-      }
+    // Already stored with a final verdict — nothing to do.
+    if (existing && !(existing.verdict === "TESTING" && verdict !== "TESTING")) {
       continue;
     }
 
-    const createdSub = await prisma.submission.create({
-      data: {
+    const record = await prisma.submission.upsert({
+      where: {
+        contestId_cfSubmissionId: {
+          contestId: contest.id,
+          cfSubmissionId: BigInt(sub.id),
+        },
+      },
+      create: {
         contestId: contest.id,
-        problemId: targetProblem.id,
+        problemId: problem.id,
         userId: user.id,
         cfSubmissionId: BigInt(sub.id),
-        verdict: subVerdict,
+        verdict,
         passedTestCount: sub.passedTestCount || 0,
-        timeSubmitted: subTime,
-        solveTimeSeconds: subVerdict === "OK" ? solveTimeSec : null,
+        timeSubmitted: submittedAt,
+        solveTimeSeconds: verdict === "OK" ? solveTimeSeconds : null,
+      },
+      update: {
+        verdict,
+        passedTestCount: sub.passedTestCount || 0,
+        solveTimeSeconds: verdict === "OK" ? solveTimeSeconds : null,
       },
       include: { user: true, problem: true },
     });
 
-    existingSubsMap.set(sub.id, createdSub);
-    newSubmissionsCount++;
+    existingSubsMap.set(sub.id, { id: record.id, verdict: record.verdict });
+    changed++;
 
-    await broadcaster.broadcastSubmission(createdSub);
-    await processLockoutLogic(contest, targetProblem, subVerdict, user, broadcaster);
+    await broadcaster.broadcastSubmission(record);
+    await applyLockout(contest, problem, verdict, user, broadcaster);
   }
 
-  return newSubmissionsCount;
+  return changed;
 }
 
-async function processLockoutLogic(contest: any, targetProblem: any, subVerdict: string, user: any, broadcaster: BroadcastService) {
-  if ((contest.mode === "LOCKOUT" || contest.mode === "BLITZ") && subVerdict === "OK") {
-    const currentUnlocked = contest.mode === "BLITZ" ? contest.problems.find((p: any) => !p.lockedWinnerId) : null;
-    
-    const canLock = contest.mode === "BLITZ" 
-      ? (currentUnlocked && currentUnlocked.id === targetProblem.id)
-      : !targetProblem.lockedWinnerId;
+/**
+ * LOCKOUT: first accepted solution claims the problem.
+ * BLITZ: same, but only the current (first unlocked) problem can be claimed,
+ * which is what makes it a linear race.
+ */
+async function applyLockout(
+  contest: ProcessableContest,
+  problem: ProcessableProblem,
+  verdict: string,
+  user: ProcessableUser,
+  broadcaster: BroadcastService,
+): Promise<void> {
+  if (verdict !== "OK") return;
+  if (contest.mode !== "LOCKOUT" && contest.mode !== "BLITZ") return;
 
-    if (canLock) {
-      await prisma.problem.update({
-        where: { id: targetProblem.id },
-        data: { lockedWinnerId: user.id },
-      });
-      targetProblem.lockedWinnerId = user.id;
-
-      await broadcaster.broadcastProblemLocked(
-        contest.mode,
-        targetProblem.id,
-        user.handle,
-        user.id,
-        targetProblem.indexInContest + 1
-      );
-    }
+  if (contest.mode === "BLITZ") {
+    const current = contest.problems.find((p) => !p.lockedWinnerId);
+    if (!current || current.id !== problem.id) return;
+  } else if (problem.lockedWinnerId) {
+    return;
   }
+
+  // Conditional update doubles as a lock: only the first writer succeeds.
+  const claimed = await prisma.problem.updateMany({
+    where: { id: problem.id, lockedWinnerId: null },
+    data: { lockedWinnerId: user.id },
+  });
+  if (claimed.count === 0) return;
+
+  problem.lockedWinnerId = user.id;
+
+  await broadcaster.broadcastProblemLocked(
+    contest.mode,
+    problem.id,
+    user.handle,
+    user.id,
+    problem.indexInContest + 1,
+  );
 }

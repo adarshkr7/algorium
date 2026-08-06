@@ -57,32 +57,60 @@ enum MatchResult {
   DRAW
 }
 
+/// How allowedTags are applied when selecting problems.
+/// ANY = problem matches if it carries at least one allowed tag.
+/// ALL = problem must carry every allowed tag.
+enum TagMatchMode {
+  ANY
+  ALL
+}
+
+enum SeriesStatus {
+  IN_PROGRESS
+  FINISHED
+}
+
 // ── Models ──
 
 model User {
-  id           String         @id @default(uuid())
-  handle       String         @unique
-  avatar       String
-  rating       Int            @default(0)
-  maxRating    Int            @default(0)
-  rank         String         @default("unrated")
-  maxRank      String         @default("unrated")
-  wins              Int            @default(0)
-  losses            Int            @default(0)
-  draws             Int            @default(0)
-  createdAt         DateTime       @default(now())
-  email             String?        @unique
+  id                String    @id @default(uuid())
+  handle            String    @unique
+  avatar            String
+  rating            Int       @default(0)
+  maxRating         Int       @default(0)
+  rank              String    @default("unrated")
+  maxRank           String    @default("unrated")
+  wins              Int       @default(0)
+  losses            Int       @default(0)
+  draws             Int       @default(0)
+  createdAt         DateTime  @default(now())
+  email             String?   @unique
   passwordHash      String?
   verificationToken String?
   tokenExpiresAt    DateTime?
 
-  hostedRooms  Room[]         @relation("HostedRooms")
-  guestRooms   Room[]         @relation("GuestRooms")
-  player1Rooms Room[]         @relation("Player1Rooms")
-  player2Rooms Room[]         @relation("Player2Rooms")
-  participants Participant[]
-  submissions  Submission[]
+  /// Algorium duel rating — independent of the Codeforces rating.
+  elo           Int      @default(1200)
+  peakElo       Int      @default(1200)
+  /// Consecutive wins. Resets to 0 on a loss, unchanged on a draw.
+  currentStreak Int      @default(0)
+  bestStreak    Int      @default(0)
+  /// Last time the user hit an authenticated endpoint. Drives cache warming.
+  lastSeenAt    DateTime @default(now())
+
+  hostedRooms    Room[]         @relation("HostedRooms")
+  guestRooms     Room[]         @relation("GuestRooms")
+  player1Rooms   Room[]         @relation("Player1Rooms")
+  player2Rooms   Room[]         @relation("Player2Rooms")
+  participants   Participant[]
+  submissions    Submission[]
   matchHistories MatchHistory[]
+  series1        MatchSeries[]  @relation("SeriesPlayer1")
+  series2        MatchSeries[]  @relation("SeriesPlayer2")
+
+  @@index([elo(sort: Desc)])
+  @@index([wins(sort: Desc)])
+  @@index([lastSeenAt])
 }
 
 model Room {
@@ -96,11 +124,29 @@ model Room {
   status      RoomStatus  @default(WAITING)
   createdAt   DateTime    @default(now())
 
-  host        User        @relation("HostedRooms", fields: [hostId], references: [id])
-  guest       User?       @relation("GuestRooms", fields: [guestId], references: [id])
-  player1     User?       @relation("Player1Rooms", fields: [player1Id], references: [id])
-  player2     User?       @relation("Player2Rooms", fields: [player2Id], references: [id])
-  contest     Contest?
+  /// Listed in the public lobby so anyone can join without a code.
+  isPublic Boolean @default(false)
+  /// Code of the room this one was created from via "Rematch".
+  rematchOfCode String?
+
+  /// Best-of series this room belongs to, if any.
+  seriesId   String?
+  gameNumber Int     @default(1)
+
+  host    User         @relation("HostedRooms", fields: [hostId], references: [id])
+  guest   User?        @relation("GuestRooms", fields: [guestId], references: [id])
+  player1 User?        @relation("Player1Rooms", fields: [player1Id], references: [id])
+  player2 User?        @relation("Player2Rooms", fields: [player2Id], references: [id])
+  series  MatchSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  contest Contest?
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([isPublic, status, createdAt(sort: Desc)])
+  @@index([hostId])
+  @@index([guestId])
+  @@index([player1Id])
+  @@index([player2Id])
+  @@index([seriesId])
 }
 
 model Contest {
@@ -120,24 +166,34 @@ model Contest {
   endTime         DateTime?
   status          ContestStatus  @default(NOT_STARTED)
 
-  room            Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  problems        Problem[]
-  participants    Participant[]
-  submissions     Submission[]
+  /// ANY (default) or ALL — how allowedTags are combined.
+  tagMatchMode TagMatchMode @default(ANY)
+  /// Solo practice run: no opponent, no rating change, no match history.
+  isSolo       Boolean      @default(false)
+
+  room         Room          @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  problems     Problem[]
+  participants Participant[]
+  submissions  Submission[]
+
+  @@index([status])
 }
 
 model Problem {
-  id             String       @id @default(uuid())
+  id             String   @id @default(uuid())
   contestId      String
-  problemKey     String       // e.g., "1800-A"
+  problemKey     String // e.g., "1800-A"
   name           String
   rating         Int
   tags           String[]
   indexInContest Int
-  lockedWinnerId String?      // For Blitz mode: handle or user id who locked it
+  lockedWinnerId String? // For Blitz/Lockout: user id who locked it
 
-  contest        Contest      @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  submissions    Submission[]
+  contest     Contest      @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+
+  @@unique([contestId, indexInContest])
+  @@index([contestId])
 }
 
 model Participant {
@@ -151,24 +207,34 @@ model Participant {
   isWinner      Boolean         @default(false)
   hasResigned   Boolean         @default(false)
 
-  contest       Contest         @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  user          User            @relation(fields: [userId], references: [id])
+  contest Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  /// One participant row per user per contest — prevents duplicate joins.
+  @@unique([contestId, userId])
+  @@index([userId])
 }
 
 model Submission {
-  id              String   @id @default(uuid())
-  contestId       String
-  problemId       String
-  userId          String
-  cfSubmissionId  BigInt
-  verdict         String   // OK, WRONG_ANSWER, TIME_LIMIT_EXCEEDED, etc.
-  passedTestCount Int      @default(0)
-  timeSubmitted   DateTime
-  solveTimeSeconds Int?    // Seconds from contest start if OK
+  id               String   @id @default(uuid())
+  contestId        String
+  problemId        String
+  userId           String
+  cfSubmissionId   BigInt
+  verdict          String // OK, WRONG_ANSWER, TIME_LIMIT_EXCEEDED, etc.
+  passedTestCount  Int      @default(0)
+  timeSubmitted    DateTime
+  solveTimeSeconds Int? // Seconds from contest start if OK
 
-  contest         Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  problem         Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
-  user            User     @relation(fields: [userId], references: [id])
+  contest Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  /// The evaluate API route and the background worker can process the same
+  /// Codeforces submission concurrently. This makes the insert idempotent.
+  @@unique([contestId, cfSubmissionId])
+  @@index([contestId, timeSubmitted])
+  @@index([userId])
 }
 
 model MatchHistory {
@@ -180,10 +246,39 @@ model MatchHistory {
   result         MatchResult
   userScore      Int
   opponentScore  Int
-  duration       Int         // in seconds
+  duration       Int // in seconds
   playedAt       DateTime    @default(now())
 
-  user           User        @relation(fields: [userId], references: [id])
+  /// Elo delta applied for this match, and the resulting rating.
+  eloChange Int @default(0)
+  eloAfter  Int @default(1200)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, playedAt(sort: Desc)])
+  @@index([roomCode])
+}
+
+/// A best-of-N run between the same two players. Each game is one Room.
+model MatchSeries {
+  id          String       @id @default(uuid())
+  bestOf      Int          @default(3)
+  player1Id   String
+  /// Null until the opponent joins the first game of the series.
+  player2Id   String?
+  player1Wins Int          @default(0)
+  player2Wins Int          @default(0)
+  draws       Int          @default(0)
+  status      SeriesStatus @default(IN_PROGRESS)
+  winnerId    String?
+  createdAt   DateTime     @default(now())
+
+  player1 User   @relation("SeriesPlayer1", fields: [player1Id], references: [id])
+  player2 User?  @relation("SeriesPlayer2", fields: [player2Id], references: [id])
+  rooms   Room[]
+
+  @@index([player1Id])
+  @@index([player2Id])
 }
 
 model ContactMessage {
@@ -193,4 +288,6 @@ model ContactMessage {
   subject   String
   message   String
   createdAt DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
 }

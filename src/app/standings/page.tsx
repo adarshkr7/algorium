@@ -1,90 +1,133 @@
-import React from "react";
 import Link from "next/link";
+import type { Metadata } from "next";
+import { Flame, Trophy } from "lucide-react";
 import { prisma } from "@/lib/prisma";
-import { Trophy, Medal, ArrowRight } from "lucide-react";
+import { cn } from "@/lib/cn";
+import { eloTier } from "@/lib/elo";
+import {
+  Avatar,
+  Badge,
+  buttonStyles,
+  EmptyState,
+  PageHeader,
+} from "@/components/ui";
 
-export const revalidate = 60; // Revalidate every minute
+export const metadata: Metadata = { title: "Standings" };
+export const revalidate = 60;
+
+const LIMIT = 100;
 
 export default async function StandingsPage() {
+  // Only players who have actually duelled belong on the ladder — otherwise
+  // every handle ever searched shows up at the default 1200.
   const users = await prisma.user.findMany({
-    orderBy: [
-      { wins: 'desc' },
-      { rating: 'desc' },
-      { handle: 'asc' }
-    ],
-    take: 100 // Limit to top 100 for now
+    where: {
+      OR: [{ wins: { gt: 0 } }, { losses: { gt: 0 } }, { draws: { gt: 0 } }],
+    },
+    orderBy: [{ elo: "desc" }, { wins: "desc" }, { handle: "asc" }],
+    take: LIMIT,
+    select: {
+      id: true,
+      handle: true,
+      avatar: true,
+      rating: true,
+      rank: true,
+      elo: true,
+      wins: true,
+      losses: true,
+      draws: true,
+      currentStreak: true,
+    },
   });
 
   return (
-    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "40px 20px" }}>
-      <div style={{ textAlign: "center", marginBottom: 48 }}>
-        <h1 style={{
-          fontSize: "clamp(2.4rem, 6vw, 3.5rem)",
-          fontWeight: 800,
-          lineHeight: 1.1,
-          color: "var(--text-primary)",
-          marginBottom: 16,
-          letterSpacing: "-0.04em",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 16
-        }}>
-          <Trophy style={{ width: 48, height: 48, color: "var(--accent)" }} />
-          Global Standings
-        </h1>
-        <p style={{
-          fontSize: "1.05rem",
-          color: "var(--text-secondary)",
-          maxWidth: 560,
-          margin: "0 auto",
-          lineHeight: 1.7,
-        }}>
-          The top players in Algorium, ranked by their duel victories and Codeforces rating.
-        </p>
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        icon={<Trophy className="size-5 text-warning" />}
+        eyebrow="Ladder"
+        title="Global standings"
+        description="Ranked by Algorium Elo — earned in duels, separate from your Codeforces rating."
+      />
 
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        {users.map((u, i) => (
-          <Link href={`/profile/${encodeURIComponent(u.handle)}`} key={u.id} style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
-            padding: "24px 20px",
-            borderBottom: "1px solid rgba(255,255,255,0.05)",
-            textDecoration: "none",
-            transition: "background 0.2s",
-            borderRadius: "16px",
-          }}
-          className="hover-bg-subtle">
-            <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-              <div style={{ width: 40, textAlign: "center", fontWeight: 800, fontSize: "1.2rem", color: i < 3 ? "var(--accent)" : "var(--text-muted)" }}>
-                {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}
-              </div>
-              <img src={u.avatar} alt={u.handle} style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover" }} />
-              <div>
-                <div style={{ fontWeight: 800, color: "#FFFFFF", fontSize: "1.2rem", letterSpacing: "-0.02em" }}>{u.handle}</div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 4 }}>{u.rank}</div>
-              </div>
-            </div>
+      {users.length === 0 ? (
+        <EmptyState
+          icon={<Trophy className="size-5" />}
+          title="Nobody has duelled yet"
+          message="Be the first on the board — host a room and win a match."
+          action={
+            <Link
+              href="/create"
+              className={buttonStyles({
+                variant: "secondary",
+                size: "sm",
+                className: "mt-1",
+              })}
+            >
+              Host a duel
+            </Link>
+          }
+        />
+      ) : (
+        <ol className="flex flex-col">
+          {users.map((user, i) => {
+            const tier = eloTier(user.elo);
+            const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
 
-            <div style={{ display: "flex", alignItems: "center", gap: 32, textAlign: "right" }}>
-              <div className="font-mono">
-                <div style={{ fontWeight: 800, color: "var(--success)", fontSize: "1.2rem" }}>
-                  {u.rating}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 4 }}>
-                  <span style={{ color: "var(--success)" }}>{u.wins}</span> / <span style={{ color: "var(--danger)" }}>{u.losses}</span> / {u.draws}
-                </div>
-              </div>
-              <ArrowRight style={{ width: 20, height: 20, color: "var(--text-muted)" }} />
-            </div>
-          </Link>
-        ))}
-        {users.length === 0 && (
-          <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)" }}>
-            No users found.
-          </div>
-        )}
-      </div>
+            return (
+              <li key={user.id}>
+                <Link
+                  href={`/profile/${encodeURIComponent(user.handle)}`}
+                  className="flex items-center gap-3 border-b border-white/6 px-1 py-4 no-underline transition-colors hover:bg-white/3 sm:gap-5 sm:px-3"
+                >
+                  <span
+                    className={cn(
+                      "w-8 shrink-0 text-center font-mono text-sm font-extrabold sm:w-10 sm:text-base",
+                      i < 3 ? "text-warning" : "text-ink-faint",
+                    )}
+                  >
+                    {medal ?? `#${i + 1}`}
+                  </span>
+
+                  <Avatar src={user.avatar} alt={user.handle} size="sm" />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="truncate text-[0.95rem] font-extrabold text-ink sm:text-lg">
+                        {user.handle}
+                      </span>
+                      {user.currentStreak >= 3 && (
+                        <Badge tone="warning" icon={<Flame className="size-3" />}>
+                          {user.currentStreak}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-eyebrow mt-1 flex flex-wrap gap-x-2 text-ink-faint">
+                      <span className={tier.className}>{tier.name}</span>
+                      <span className="hidden xs:inline">·</span>
+                      <span className="hidden xs:inline">
+                        CF {user.rating || "unrated"}
+                      </span>
+                    </p>
+                  </div>
+
+                  <div className="shrink-0 text-right font-mono">
+                    <p className="text-base font-extrabold text-ink sm:text-lg">
+                      {user.elo}
+                    </p>
+                    <p className="mt-0.5 text-[0.68rem] text-ink-faint">
+                      <span className="text-success">{user.wins}</span>
+                      {" / "}
+                      <span className="text-danger">{user.losses}</span>
+                      {" / "}
+                      {user.draws}
+                    </p>
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </div>
   );
 }

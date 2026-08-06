@@ -4,9 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "worker:cache": "tsx --conditions react-server src/worker/cf-cache-daemon.ts",
+    "worker:eval": "tsx --conditions react-server src/worker/arena-evaluator.ts",
+    "dev:all": "concurrently \"npm run dev\" \"npm run worker:cache\" \"npm run worker:eval\"",
+    "start:workers": "concurrently \"npm run worker:cache\" \"npm run worker:eval\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -17,6 +24,7 @@
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
     "framer-motion": "^12.43.0",
+    "ioredis": "^6.0.0",
     "jose": "^6.2.8",
     "lucide-react": "^1.28.0",
     "next": "16.2.12",
@@ -26,7 +34,9 @@
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
     "socket.io-client": "^4.8.3",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "tsx": "^4.23.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -36,9 +46,11 @@
     "@types/nodemailer": "^8.0.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^10.0.4",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "tailwindcss": "^4",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5"
   }
 }

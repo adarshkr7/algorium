@@ -1,129 +1,149 @@
-import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { generateContest, generateRoomCode } from "@/lib/contest-generator";
-import { requireAuth, isErrorResponse, apiError, apiSuccess } from "@/lib/api-utils";
+import {
+  apiError,
+  apiSuccess,
+  enforceRateLimit,
+  handleUnexpected,
+  isErrorResponse,
+  parseBody,
+  requireAuth,
+} from "@/lib/api-utils";
+import { CreateContestSchema } from "@/lib/validation";
+import { findActiveRoomForUser } from "@/lib/services/room-service";
 
+const MAX_CODE_ATTEMPTS = 10;
+
+/**
+ * POST /api/contests/create
+ *
+ * The host id is taken from the session rather than the request body — the
+ * previous version accepted `hostId` from the client and then compared it to
+ * the session, which was redundant and easy to get wrong.
+ */
 export async function POST(req: Request) {
   try {
-    const sessionOrError = await requireAuth(req);
-    if (isErrorResponse(sessionOrError)) return sessionOrError;
-    const session = sessionOrError;
+    const limited = enforceRateLimit(
+      req,
+      10,
+      60_000,
+      "You're creating rooms too quickly. Wait a minute and try again.",
+    );
+    if (limited) return limited;
 
-    const body = await req.json();
-    const {
-      hostId,
-      hostHandle,
-      name,
-      mode,
-      pointingSystem = "ICPC",
-      hostingType = "PLAYER_HOST", // "PLAYER_HOST" (Host plays) vs "SUPERVISED" (Host spectates 2 participants)
-      problemCount = 3,
-      durationMinutes = 30,
-      minRating = 800,
-      maxRating = 1600,
-      allowedTags = [],
-      excludedTags = [],
-      ratings = undefined,
-      seed = "",
-    } = body;
+    const session = await requireAuth(req);
+    if (isErrorResponse(session)) return session;
 
-    if (!hostId || !hostHandle || !name || !mode) {
-      return apiError("Missing required fields (hostId, hostHandle, name, mode)", 400);
-    }
+    const body = await parseBody(req, CreateContestSchema);
+    if (isErrorResponse(body)) return body;
 
-    if (session.userId !== hostId) {
-      return apiError("Unauthorized: hostId does not match session", 403);
-    }
-
-    const actualMinRating = ratings && ratings.length > 0 ? Math.min(...ratings) : Number(minRating);
-    const actualMaxRating = ratings && ratings.length > 0 ? Math.max(...ratings) : Number(maxRating);
-
-    // 0. Check if user is already in an active room
-    const activeRoom = await prisma.room.findFirst({
-      where: {
-        OR: [
-          { hostId: hostId },
-          { guestId: hostId },
-          { player1Id: hostId },
-          { player2Id: hostId },
-        ],
-        status: { in: ["WAITING", "IN_PROGRESS"] },
-        NOT: {
-          contest: {
-            participants: {
-              some: {
-                userId: hostId,
-                hasResigned: true,
-              },
-            },
-          },
-        },
-      },
+    const host = await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { id: true, handle: true },
     });
+    if (!host) return apiError("Your account no longer exists", 404);
 
+    // ── One active room per user ───────────────────────────────────────────
+    const activeRoom = await findActiveRoomForUser(host.id);
     if (activeRoom) {
-      return apiError("You are already in an active room. Please leave it first.", 400);
+      return apiError(
+        `You're already in room ${activeRoom.code}. Leave it before creating another.`,
+        409,
+        { code: "ALREADY_IN_ROOM", details: { code: activeRoom.code } },
+      );
     }
 
-    // 1. Generate unique 6-character room code
+    const usingExactRatings = Boolean(body.ratings && body.ratings.length > 0);
+    const problemCount = usingExactRatings
+      ? body.ratings!.length
+      : body.problemCount;
+    const minRating = usingExactRatings
+      ? Math.min(...body.ratings!)
+      : body.minRating;
+    const maxRating = usingExactRatings
+      ? Math.max(...body.ratings!)
+      : body.maxRating;
+
+    // ── Unique room code ───────────────────────────────────────────────────
     let code = generateRoomCode();
-    let existing = await prisma.room.findUnique({ where: { code } });
-    let retries = 0;
-    while (existing && retries < 10) {
+    for (let i = 0; i < MAX_CODE_ATTEMPTS; i++) {
+      const clash = await prisma.room.findUnique({
+        where: { code },
+        select: { id: true },
+      });
+      if (!clash) break;
       code = generateRoomCode();
-      existing = await prisma.room.findUnique({ where: { code } });
-      retries++;
+      if (i === MAX_CODE_ATTEMPTS - 1) {
+        return apiError("Could not allocate a room code. Please retry.", 503);
+      }
     }
 
-    if (existing) {
-      return apiError("Failed to generate unique room code. Please try again.", 500);
-    }
-
-    // 2. Generate problem set
-    const generatedProblems = await generateContest({
-      name,
-      mode,
-      problemCount: ratings && ratings.length > 0 ? ratings.length : Number(problemCount),
-      durationMinutes: Number(durationMinutes),
-      minRating: actualMinRating,
-      maxRating: actualMaxRating,
-      allowedTags: Array.isArray(allowedTags) ? allowedTags : [],
-      excludedTags: Array.isArray(excludedTags) ? excludedTags : [],
-      ratings: Array.isArray(ratings) && ratings.length > 0 ? ratings : undefined,
-      seed: seed || code,
-      hostHandle,
+    // ── Problem selection ──────────────────────────────────────────────────
+    const problems = await generateContest({
+      name: body.name,
+      mode: body.mode,
+      problemCount,
+      durationMinutes: body.durationMinutes,
+      minRating,
+      maxRating,
+      allowedTags: body.allowedTags,
+      excludedTags: body.excludedTags,
+      tagMatchMode: body.tagMatchMode,
+      ratings: usingExactRatings ? body.ratings : undefined,
+      seed: body.seed || code,
+      hostHandle: host.handle,
     });
 
-    if (generatedProblems.length === 0) {
-      return apiError("Could not find suitable problems matching criteria.", 400);
+    if (problems.length === 0) {
+      return apiError(
+        "No Codeforces problems matched those filters that you haven't already solved. Try widening the rating range or removing tags.",
+        422,
+        { code: "NO_PROBLEMS_FOUND" },
+      );
     }
 
-    const isSupervised = hostingType === "SUPERVISED";
+    const isSupervised = body.hostingType === "SUPERVISED";
+    const isSolo = body.isSolo && !isSupervised;
 
-    // 3. Save Room, Contest, Problems, and Host Participant in DB
+    // ── Optional best-of series ────────────────────────────────────────────
+    let seriesId: string | null = null;
+    if (body.bestOf > 1 && !isSolo && !isSupervised) {
+      const series = await prisma.matchSeries.create({
+        data: { bestOf: body.bestOf, player1Id: host.id },
+        select: { id: true },
+      });
+      seriesId = series.id;
+    }
+
     const room = await prisma.room.create({
       data: {
         code,
-        hostId,
+        hostId: host.id,
         hostingType: isSupervised ? "SUPERVISED" : "PLAYER_HOST",
-        player1Id: isSupervised ? null : hostId,
+        player1Id: isSupervised ? null : host.id,
         player2Id: null,
         status: "WAITING",
+        // A solo run is never listed publicly — there is nothing to join.
+        isPublic: body.isPublic && !isSolo,
+        seriesId,
+        gameNumber: 1,
         contest: {
           create: {
-            name,
-            mode,
-            pointingSystem,
-            problemCount: generatedProblems.length,
-            durationMinutes: Number(durationMinutes),
-            minRating: actualMinRating,
-            maxRating: actualMaxRating,
-            allowedTags: Array.isArray(allowedTags) ? allowedTags : [],
-            excludedTags: Array.isArray(excludedTags) ? excludedTags : [],
-            seed: seed || code,
+            name: body.name,
+            mode: body.mode,
+            pointingSystem: body.pointingSystem,
+            problemCount: problems.length,
+            durationMinutes: body.durationMinutes,
+            minRating,
+            maxRating,
+            allowedTags: body.allowedTags,
+            excludedTags: body.excludedTags,
+            tagMatchMode: body.tagMatchMode,
+            isSolo,
+            seed: body.seed || code,
             status: "NOT_STARTED",
             problems: {
-              create: generatedProblems.map((p) => ({
+              create: problems.map((p) => ({
                 problemKey: p.problemKey,
                 name: p.name,
                 rating: p.rating,
@@ -133,7 +153,7 @@ export async function POST(req: Request) {
             },
             participants: {
               create: {
-                userId: hostId,
+                userId: host.id,
                 role: isSupervised ? "SUPERVISOR" : "HOST",
               },
             },
@@ -143,22 +163,27 @@ export async function POST(req: Request) {
       include: {
         contest: {
           include: {
-            problems: true,
-            participants: {
-              include: { user: true },
-            },
+            problems: { orderBy: { indexInContest: "asc" } },
+            participants: { include: { user: true } },
           },
         },
         host: true,
         guest: true,
         player1: true,
         player2: true,
+        series: true,
       },
     });
 
-    return apiSuccess({ room }, 201);
+    // Fewer problems than requested means the filters were tight — tell the
+    // host rather than silently handing them a shorter contest.
+    const shortfall =
+      problems.length < problemCount
+        ? `Only ${problems.length} of ${problemCount} problems matched your filters.`
+        : null;
+
+    return apiSuccess({ room, warning: shortfall }, 201);
   } catch (error) {
-    console.error("Create contest API error:", error);
-    return apiError("Internal server error", 500);
+    return handleUnexpected("contests/create", error);
   }
 }

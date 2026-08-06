@@ -1,89 +1,121 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import nodemailer from "nodemailer";
-import { apiError, apiSuccess } from "@/lib/api-utils";
-import { rateLimit } from "@/lib/rate-limit";
 import crypto from "crypto";
+import nodemailer from "nodemailer";
+import { prisma } from "@/lib/prisma";
+import {
+  apiSuccess,
+  enforceRateLimit,
+  handleUnexpected,
+  isErrorResponse,
+  parseBody,
+} from "@/lib/api-utils";
+import { SendOtpSchema } from "@/lib/validation";
 
+const OTP_TTL_MS = 10 * 60 * 1000;
+
+/** Masks an address for the UI: adarshjijh@gmail.com -> a•••••••h@gmail.com */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return "your email";
+  const visible = local.length <= 2 ? local[0] : `${local[0]}…${local.at(-1)}`;
+  return `${visible}@${domain}`;
+}
+
+function buildTransport() {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return null;
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+  });
+}
+
+/**
+ * POST /api/users/forgot-password/send-otp
+ *
+ * Always answers 200, whether or not the account exists — otherwise this is a
+ * free "does this handle have an account?" oracle. The response includes a
+ * masked destination when there is one, so a legitimate user still gets useful
+ * feedback.
+ */
 export async function POST(req: Request) {
   try {
-    const rl = rateLimit(req as any, 3, 60 * 1000); // 3 OTP requests per minute
-    if (!rl.success) {
-      return apiError("Too many OTP requests. Please try again later.", 429);
-    }
+    const limited = enforceRateLimit(
+      req,
+      3,
+      60_000,
+      "Too many code requests. Please wait a minute.",
+    );
+    if (limited) return limited;
 
-    const { handleOrEmail } = await req.json();
+    const body = await parseBody(req, SendOtpSchema);
+    if (isErrorResponse(body)) return body;
 
-    if (!handleOrEmail) {
-      return apiError("Handle or email is required", 400);
-    }
+    const identifier = body.handleOrEmail;
 
-    // Find the user by handle or email
     const user = await prisma.user.findFirst({
       where: {
         OR: [
-          { handle: { equals: handleOrEmail, mode: "insensitive" } },
-          { email: { equals: handleOrEmail, mode: "insensitive" } }
-        ]
-      }
+          { handle: { equals: identifier, mode: "insensitive" } },
+          { email: { equals: identifier, mode: "insensitive" } },
+        ],
+      },
+      select: { id: true, handle: true, email: true },
     });
 
-    if (!user) {
-      return apiError("User not found", 404);
+    const genericResponse = apiSuccess({
+      success: true,
+      message:
+        "If that account exists and has an email on file, a code is on its way.",
+      sentTo: user?.email ? maskEmail(user.email) : null,
+      handle: user?.handle ?? null,
+    });
+
+    if (!user?.email) return genericResponse;
+
+    const transport = buildTransport();
+    if (!transport) {
+      console.error(
+        "[forgot-password] EMAIL_USER / EMAIL_PASS are not configured.",
+      );
+      return genericResponse;
     }
 
-    if (!user.email) {
-      return apiError("No email associated with this account", 400);
-    }
-
-    // Generate a 6-digit OTP using crypto
     const otp = crypto.randomInt(100000, 1000000).toString();
 
-    // Set expiry to 10 minutes from now
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-    // Save OTP to user's verificationToken
     await prisma.user.update({
       where: { id: user.id },
       data: {
         verificationToken: otp,
-        tokenExpiresAt: expiresAt,
+        tokenExpiresAt: new Date(Date.now() + OTP_TTL_MS),
       },
     });
 
-    // Configure Nodemailer transporter
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
-
-    // Send email
-    const mailOptions = {
-      from: `"Algorium" <${process.env.EMAIL_USER}>`,
-      to: user.email,
-      subject: "Password Reset OTP - Algorium",
-      text: `Your OTP for resetting your Algorium password is: ${otp}\nThis OTP is valid for 10 minutes.`,
-      html: `
-        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2>Algorium Password Reset</h2>
-          <p>Hello ${user.handle},</p>
-          <p>You requested to reset your password. Use the following OTP to proceed:</p>
-          <div style="background: #f4f4f5; padding: 16px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 4px; border-radius: 8px; margin: 24px 0;">
-            ${otp}
+    try {
+      await transport.sendMail({
+        from: `"Algorium" <${process.env.EMAIL_USER}>`,
+        to: user.email,
+        subject: "Your Algorium password reset code",
+        text:
+          `Your Algorium password reset code is ${otp}.\n` +
+          `It expires in 10 minutes. If you didn't request this, ignore this email.`,
+        html: `
+          <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;color:#18181B">
+            <h2 style="margin:0 0 12px">Algorium password reset</h2>
+            <p style="margin:0 0 16px">Hi ${user.handle}, use this code to set a new password:</p>
+            <div style="background:#F4F4F5;padding:18px;text-align:center;font-size:28px;font-weight:700;letter-spacing:6px;border-radius:10px;margin:20px 0">
+              ${otp}
+            </div>
+            <p style="color:#71717A;font-size:13px;margin:0">
+              This code expires in 10 minutes. If you didn't request it, you can safely ignore this email.
+            </p>
           </div>
-          <p>This OTP will expire in 10 minutes. If you did not request this, please ignore this email.</p>
-        </div>
-      `,
-    };
+        `,
+      });
+    } catch (error) {
+      console.error("[forgot-password] send failed:", error);
+    }
 
-    await transporter.sendMail(mailOptions);
-
-    return apiSuccess({ success: true, message: "OTP sent successfully" }, 200);
-  } catch (error: any) {
-    console.error("Error sending OTP:", error);
-    return apiError("Failed to send OTP", 500);
+    return genericResponse;
+  } catch (error) {
+    return handleUnexpected("users/forgot-password/send-otp", error);
   }
 }

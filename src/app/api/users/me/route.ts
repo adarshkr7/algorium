@@ -1,40 +1,35 @@
-import { NextResponse } from "next/server";
-import { getSessionFromRequest } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { apiError } from "@/lib/api-utils";
+import { apiError, apiSuccess, handleUnexpected } from "@/lib/api-utils";
+import {
+  getSessionFromRequest,
+  PUBLIC_USER_FIELDS,
+  touchLastSeen,
+} from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/users/me
- * Returns the currently authenticated user from the session cookie.
- */
+/** GET /api/users/me — the signed-in user, or 401. */
 export async function GET(req: Request) {
   try {
     const session = await getSessionFromRequest(req);
     if (!session) {
-      return apiError("Not authenticated", 401);
+      return apiError("Not authenticated", 401, { code: "UNAUTHENTICATED" });
     }
 
     const user = await prisma.user.findUnique({
       where: { id: session.userId },
-      select: {
-        id: true,
-        handle: true,
-        avatar: true,
-        rating: true,
-        maxRating: true,
-        rank: true,
-        maxRank: true,
-      },
+      select: PUBLIC_USER_FIELDS,
     });
 
     if (!user) {
-      return apiError("User not found", 404);
+      return apiError("User not found", 404, { code: "USER_NOT_FOUND" });
     }
 
-    return NextResponse.json({ user });
-  } catch {
-    return apiError("Internal server error", 500);
+    // Fire and forget — keeps the CF cache daemon focused on active players.
+    touchLastSeen(user.id);
+
+    return apiSuccess({ user });
+  } catch (error) {
+    return handleUnexpected("users/me", error);
   }
 }

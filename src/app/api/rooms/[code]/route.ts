@@ -1,56 +1,32 @@
-import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { apiError, apiSuccess, handleUnexpected } from "@/lib/api-utils";
+import { ROOM_INCLUDE } from "@/lib/services/room-service";
 
 export const dynamic = "force-dynamic";
 
+/** GET /api/rooms/[code] — full room state for the lobby and arena. */
 export async function GET(
-  req: Request,
-  { params }: { params: Promise<{ code: string }> }
+  _req: Request,
+  { params }: { params: Promise<{ code: string }> },
 ) {
   try {
     const { code } = await params;
-    if (!code) {
-      return NextResponse.json({ error: "Room code is required" }, { status: 400 });
+    if (!code || code.length !== 6) {
+      return apiError("Invalid room code", 400, { code: "INVALID_CODE" });
     }
 
     const room = await prisma.room.findUnique({
       where: { code: code.toUpperCase() },
-      include: {
-        host: true,
-        guest: true,
-        player1: true,
-        player2: true,
-        contest: {
-          include: {
-            problems: {
-              orderBy: { indexInContest: "asc" },
-            },
-            participants: {
-              include: { user: true },
-            },
-            submissions: {
-              include: { user: true, problem: true },
-              orderBy: { timeSubmitted: "asc" },
-            },
-          },
-        },
-      },
+      include: ROOM_INCLUDE,
     });
 
     if (!room) {
-      return NextResponse.json({ error: "Room not found" }, { status: 404 });
+      return apiError("Room not found", 404, { code: "ROOM_NOT_FOUND" });
     }
 
-    // Serialize BigInt fields (cfSubmissionId) before JSON response
-    const serialized = JSON.parse(
-      JSON.stringify(room, (_key, value) =>
-        typeof value === "bigint" ? value.toString() : value
-      )
-    );
-
-    return NextResponse.json({ room: serialized });
+    // apiSuccess serialises BigInt (Submission.cfSubmissionId) safely.
+    return apiSuccess({ room });
   } catch (error) {
-    console.error("Get room API error:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return handleUnexpected("rooms/[code]", error);
   }
 }

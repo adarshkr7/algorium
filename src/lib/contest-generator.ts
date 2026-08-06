@@ -2,8 +2,10 @@ import "server-only";
 import {
   fetchCFProblemSet,
   fetchCFUserSolvedKeys,
-  CFProblem,
+  type CFProblem,
 } from "./codeforces";
+
+export type TagMatchMode = "ANY" | "ALL";
 
 export interface GenerateContestOptions {
   name: string;
@@ -14,11 +16,13 @@ export interface GenerateContestOptions {
   maxRating: number;
   allowedTags: string[];
   excludedTags: string[];
-  ratings?: number[]; // NEW: array of exact ratings
+  /** ANY = at least one allowed tag, ALL = every allowed tag. */
+  tagMatchMode?: TagMatchMode;
+  /** Exact per-problem ratings. When present, overrides min/max. */
+  ratings?: number[];
   seed?: string;
   hostHandle: string;
   guestHandle?: string;
-  preferOldProblems?: boolean;
 }
 
 export interface GeneratedProblem {
@@ -29,15 +33,13 @@ export interface GeneratedProblem {
   indexInContest: number;
 }
 
-/**
- * Seeded PRNG for reproducible problem selection when a seed is supplied.
- */
+/** Deterministic PRNG so a given seed always yields the same problem set. */
 function seededRandom(seedStr: string) {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < seedStr.length; i++) {
     h = Math.imul(h ^ seedStr.charCodeAt(i), 16777619);
   }
-  return function () {
+  return function next() {
     h += h << 13;
     h ^= h >>> 7;
     h += h << 3;
@@ -55,9 +57,7 @@ function shuffleArray<T>(array: T[], randomFn: () => number): T[] {
   return arr;
 }
 
-/**
- * Generates a unique 6-character room code consisting of uppercase letters and digits.
- */
+/** Ambiguous characters (0/O, 1/I) are excluded so codes are easy to read out. */
 export function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -67,18 +67,24 @@ export function generateRoomCode(): string {
   return code;
 }
 
+const problemKeyOf = (p: CFProblem) =>
+  `${p.contestId}-${String(p.index).trim().toUpperCase()}`;
+
 /**
- * Selects problems for a contest based on parameters and player submission histories.
- * Enforces:
- * - Only official Codeforces problems (contestId < 10000)
- * - Prefers OLDER problems (contestId <= 1500 or sorting by contestId ascending/classic)
- * - Strict verification that NEITHER player has solved the problem before (verdict === OK)
+ * Selects problems matching the contest configuration.
+ *
+ * Hard rules:
+ *  - official problems only (contestId < 10000)
+ *  - no interactive or *special problems (they can't be judged fairly here)
+ *  - neither player may have an accepted submission for it already
+ *  - older problems (contestId <= 1500) are preferred when there are enough,
+ *    since recent problems are more likely to have been seen in practice
  */
 export function filterAndSelectProblems(
   allProblems: CFProblem[],
   solvedKeysHost: Set<string>,
   solvedKeysGuest: Set<string>,
-  options: GenerateContestOptions
+  options: GenerateContestOptions,
 ): GeneratedProblem[] {
   const {
     problemCount,
@@ -86,157 +92,194 @@ export function filterAndSelectProblems(
     maxRating,
     allowedTags,
     excludedTags,
+    tagMatchMode = "ANY",
     ratings,
     seed,
   } = options;
 
   const randomFn = seed ? seededRandom(seed) : Math.random;
-  const seenKeys = new Set<string>();
+  const takenKeys = new Set<string>();
 
-  const isValidCandidate = (prob: CFProblem, checkRating: boolean, targetRating?: number) => {
+  const isEligible = (
+    prob: CFProblem,
+    checkRating: boolean,
+    targetRating?: number,
+  ): boolean => {
     if (!prob.contestId || !prob.index || !prob.name) return false;
     if (prob.contestId >= 10000) return false;
 
-    const formattedIndex = String(prob.index).trim().toUpperCase();
-    const key = `${prob.contestId}-${formattedIndex}`;
-    
-    if (seenKeys.has(key)) return false;
-    
-    const tags = prob.tags || [];
+    const key = problemKeyOf(prob);
+    if (takenKeys.has(key)) return false;
+
+    const tags = prob.tags ?? [];
     if (
       tags.includes("*special") ||
       tags.includes("interactive") ||
       prob.name.toLowerCase().includes("interactive")
-    ) return false;
-    
-    const rating = prob.rating || 1200;
+    ) {
+      return false;
+    }
 
+    const rating = prob.rating ?? 1200;
     if (checkRating) {
       if (targetRating !== undefined) {
-         if (rating !== targetRating) return false;
-      } else {
-         if (rating < minRating || rating > maxRating) return false;
+        if (rating !== targetRating) return false;
+      } else if (rating < minRating || rating > maxRating) {
+        return false;
       }
     }
 
-    if (excludedTags.length > 0) {
-      if (excludedTags.some((exTag) => tags.includes(exTag))) return false;
+    if (excludedTags.length > 0 && excludedTags.some((t) => tags.includes(t))) {
+      return false;
     }
 
     if (allowedTags.length > 0) {
-      if (!allowedTags.some((alTag) => tags.includes(alTag))) return false;
+      const matches =
+        tagMatchMode === "ALL"
+          ? allowedTags.every((t) => tags.includes(t))
+          : allowedTags.some((t) => tags.includes(t));
+      if (!matches) return false;
     }
 
-    // 7. VERIFICATION: Neither player has solved this problem before!
+    // Neither contestant may have solved it before.
     if (solvedKeysHost.has(key) || solvedKeysGuest.has(key)) return false;
 
     return true;
   };
 
-  const getBestCandidates = (candidates: CFProblem[], neededCount: number) => {
-    const oldCandidates = candidates.filter((p) => p.contestId <= 1500);
-    const poolToUse = oldCandidates.length >= neededCount ? oldCandidates : candidates;
-    return shuffleArray(poolToUse, randomFn);
+  const preferOlder = (candidates: CFProblem[], needed: number) => {
+    const older = candidates.filter((p) => p.contestId <= 1500);
+    const pool = older.length >= needed ? older : candidates;
+    return shuffleArray(pool, randomFn);
   };
 
-  if (ratings && ratings.length > 0) {
-    const selectedProblems: CFProblem[] = [];
-    
-    for (const targetRating of ratings) {
-        let candidates = allProblems.filter((p) => isValidCandidate(p, true, targetRating));
-        
-        // If not found, fallback to targetRating ± 100
-        if (candidates.length === 0) {
-           candidates = allProblems.filter((p) => isValidCandidate(p, false));
-           candidates = candidates.filter(p => {
-               const r = p.rating || 1200;
-               return Math.abs(r - targetRating) <= 100;
-           });
-        }
+  const toGenerated = (
+    problems: CFProblem[],
+    sortByRating: boolean,
+  ): GeneratedProblem[] => {
+    const list = sortByRating
+      ? [...problems].sort((a, b) => (a.rating ?? 0) - (b.rating ?? 0))
+      : problems;
 
-        const shuffled = getBestCandidates(candidates, 1);
-        if (shuffled.length > 0) {
-            const picked = shuffled[0];
-            selectedProblems.push(picked);
-            seenKeys.add(`${picked.contestId}-${String(picked.index).trim().toUpperCase()}`);
-        }
-    }
-    
-    return selectedProblems.map((prob, idx) => ({
-      problemKey: `${prob.contestId}-${String(prob.index).trim().toUpperCase()}`,
+    return list.map((prob, idx) => ({
+      problemKey: problemKeyOf(prob),
       name: prob.name,
-      rating: prob.rating || 1200,
-      tags: prob.tags || [],
+      rating: prob.rating ?? 1200,
+      tags: prob.tags ?? [],
       indexInContest: idx,
     }));
+  };
+
+  // ── Exact-ratings mode: one problem per requested rating ────────────────
+  if (ratings && ratings.length > 0) {
+    const picked: CFProblem[] = [];
+
+    for (const target of ratings) {
+      let candidates = allProblems.filter((p) => isEligible(p, true, target));
+
+      // Widen to ±100 if that exact rating has nothing left.
+      if (candidates.length === 0) {
+        candidates = allProblems.filter(
+          (p) =>
+            isEligible(p, false) &&
+            Math.abs((p.rating ?? 1200) - target) <= 100,
+        );
+      }
+      // Last resort: ±200.
+      if (candidates.length === 0) {
+        candidates = allProblems.filter(
+          (p) =>
+            isEligible(p, false) &&
+            Math.abs((p.rating ?? 1200) - target) <= 200,
+        );
+      }
+
+      const shuffled = preferOlder(candidates, 1);
+      if (shuffled.length > 0) {
+        picked.push(shuffled[0]);
+        takenKeys.add(problemKeyOf(shuffled[0]));
+      }
+    }
+
+    return toGenerated(picked, false);
   }
 
-  // RANGE MODE
-  const validCandidates = allProblems.filter(p => isValidCandidate(p, true));
-  const shuffled = getBestCandidates(validCandidates, problemCount);
-  const selected = shuffled.slice(0, problemCount);
-  selected.sort((a, b) => (a.rating || 0) - (b.rating || 0));
+  // ── Range mode ───────────────────────────────────────────────────────────
+  const eligible = allProblems.filter((p) => isEligible(p, true));
+  const selected = preferOlder(eligible, problemCount).slice(0, problemCount);
+  selected.forEach((p) => takenKeys.add(problemKeyOf(p)));
 
-  return selected.map((prob, idx) => ({
-    problemKey: `${prob.contestId}-${String(prob.index).trim().toUpperCase()}`,
-    name: prob.name,
-    rating: prob.rating || 1200,
-    tags: prob.tags || [],
-    indexInContest: idx,
-  }));
+  return toGenerated(selected, true);
 }
 
 /**
- * Main helper to fetch data and generate contest problems.
+ * Fetches everything needed and produces the problem set, progressively
+ * relaxing constraints rather than failing outright:
+ *   1. exactly as configured
+ *   2. drop the tag filters
+ *   3. widen the rating window by ±400
  */
 export async function generateContest(
-  options: GenerateContestOptions
+  options: GenerateContestOptions,
 ): Promise<GeneratedProblem[]> {
   const [allProblems, hostSolved, guestSolved] = await Promise.all([
     fetchCFProblemSet(),
     fetchCFUserSolvedKeys(options.hostHandle),
-    options.guestHandle ? fetchCFUserSolvedKeys(options.guestHandle) : Promise.resolve(new Set<string>()),
+    options.guestHandle
+      ? fetchCFUserSolvedKeys(options.guestHandle)
+      : Promise.resolve(new Set<string>()),
   ]);
 
-  let problems = filterAndSelectProblems(allProblems, hostSolved, guestSolved, options);
+  if (allProblems.length === 0) return [];
 
-  // Fallback if tag constraints were too restrictive
-  if (problems.length < options.problemCount) {
-    console.warn("Fewer problems found than requested; relaxing tag constraints.");
-    const fallbackOptions = { ...options, allowedTags: [], excludedTags: [] };
-    problems = filterAndSelectProblems(allProblems, hostSolved, guestSolved, fallbackOptions);
+  const attempts: GenerateContestOptions[] = [
+    options,
+    { ...options, allowedTags: [], excludedTags: [] },
+    {
+      ...options,
+      allowedTags: [],
+      excludedTags: [],
+      minRating: Math.max(800, options.minRating - 400),
+      maxRating: Math.min(3500, options.maxRating + 400),
+    },
+  ];
+
+  let best: GeneratedProblem[] = [];
+
+  for (const attempt of attempts) {
+    const problems = filterAndSelectProblems(
+      allProblems,
+      hostSolved,
+      guestSolved,
+      attempt,
+    );
+    if (problems.length > best.length) best = problems;
+    if (best.length >= options.problemCount) break;
   }
 
-  return problems.slice(0, options.problemCount);
+  return best.slice(0, options.problemCount);
 }
 
 /**
- * Re-verifies problems when guest joins. If any problem was already solved by host or guest,
- * replaces it with a fresh unsolved problem.
+ * Re-checks the generated set once the second player joins. If either player
+ * has already solved one of the problems, the whole set is regenerated using
+ * both histories.
  */
 export async function verifyAndReplaceSolvedProblems(
   existingProblems: GeneratedProblem[],
   hostHandle: string,
   guestHandle: string,
-  options: GenerateContestOptions
+  options: GenerateContestOptions,
 ): Promise<GeneratedProblem[]> {
   const [hostSolved, guestSolved] = await Promise.all([
     fetchCFUserSolvedKeys(hostHandle),
     fetchCFUserSolvedKeys(guestHandle),
   ]);
 
-  const hasSolvedProblem = existingProblems.some(
-    (p) => hostSolved.has(p.problemKey) || guestSolved.has(p.problemKey)
+  const stale = existingProblems.some(
+    (p) => hostSolved.has(p.problemKey) || guestSolved.has(p.problemKey),
   );
+  if (!stale) return existingProblems;
 
-  if (!hasSolvedProblem) {
-    return existingProblems;
-  }
-
-  // Regenerate clean problem set using both solved histories
-  return generateContest({
-    ...options,
-    hostHandle,
-    guestHandle,
-  });
+  return generateContest({ ...options, hostHandle, guestHandle });
 }

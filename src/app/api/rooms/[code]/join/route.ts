@@ -1,241 +1,264 @@
-import { NextResponse } from "next/server";
+import { ParticipantRole, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { generateContest } from "@/lib/contest-generator";
 import { fetchCFUserSolvedKeys } from "@/lib/codeforces";
-import { requireAuth, isErrorResponse, apiError, apiSuccess } from "@/lib/api-utils";
-import { ParticipantRole } from "@prisma/client";
+import {
+  apiError,
+  apiSuccess,
+  enforceRateLimit,
+  handleUnexpected,
+  isErrorResponse,
+  requireAuth,
+} from "@/lib/api-utils";
+import {
+  ROOM_INCLUDE,
+  findActiveRoomForUser,
+} from "@/lib/services/room-service";
+import { BroadcastService } from "@/lib/services/broadcast";
 
+/**
+ * POST /api/rooms/[code]/join
+ *
+ * The joining user is taken from the session; the body is ignored. Assignment
+ * uses a conditional update (`where: { player2Id: null }`) so two people
+ * racing for the last slot cannot both win it.
+ */
 export async function POST(
   req: Request,
-  { params }: { params: Promise<{ code: string }> }
+  { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    const sessionOrError = await requireAuth(req);
-    if (isErrorResponse(sessionOrError)) return sessionOrError;
-    const session = sessionOrError;
+    const limited = enforceRateLimit(req, 30, 60_000);
+    if (limited) return limited;
 
-    const { code } = await params;
-    const { guestId } = await req.json(); // guestId refers to joining userId
+    const session = await requireAuth(req);
+    if (isErrorResponse(session)) return session;
 
-    if (!code || !guestId) {
-      return apiError("Room code and guestId are required", 400);
+    const { code: rawCode } = await params;
+    if (!rawCode || rawCode.length !== 6) {
+      return apiError("Invalid room code", 400, { code: "INVALID_CODE" });
     }
+    const code = rawCode.toUpperCase();
+    const userId = session.userId;
 
-    if (session.userId !== guestId) {
-      return apiError("Unauthorized: guestId does not match session", 403);
-    }
-
-    const uppercaseCode = code.toUpperCase();
     const room = await prisma.room.findUnique({
-      where: { code: uppercaseCode },
-      include: {
-        host: true,
-        guest: true,
-        player1: true,
-        player2: true,
-        contest: {
-          include: {
-            problems: { orderBy: { indexInContest: "asc" } },
-          },
-        },
-      },
+      where: { code },
+      include: ROOM_INCLUDE,
     });
-
     if (!room) {
-      return apiError("Room not found", 404);
+      return apiError("Room not found", 404, { code: "ROOM_NOT_FOUND" });
+    }
+    if (room.status === "CANCELLED") {
+      return apiError("This room was cancelled", 410, { code: "ROOM_CANCELLED" });
+    }
+    if (room.status === "FINISHED") {
+      return apiError("This contest has already finished", 410, {
+        code: "ROOM_FINISHED",
+      });
     }
 
-    const isSupervised = room.hostingType === "SUPERVISED";
-    const joiningUser = await prisma.user.findUnique({ where: { id: guestId } });
-    if (!joiningUser) {
-      return apiError("User not found", 404);
-    }
-
-    const activeRoom = await prisma.room.findFirst({
-      where: {
-        OR: [
-          { hostId: guestId },
-          { guestId: guestId },
-          { player1Id: guestId },
-          { player2Id: guestId },
-        ],
-        status: { in: ["WAITING", "IN_PROGRESS"] },
-        NOT: {
-          contest: {
-            participants: {
-              some: {
-                userId: guestId,
-                hasResigned: true,
-              },
-            },
-          },
-        },
-      },
+    const joiningUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, handle: true },
     });
+    if (!joiningUser) return apiError("Your account no longer exists", 404);
 
-    if (activeRoom && activeRoom.code !== uppercaseCode) {
-      return apiError("You are already in another active room. Please leave it first.", 400);
+    const alreadyInRoom =
+      room.hostId === userId ||
+      room.guestId === userId ||
+      room.player1Id === userId ||
+      room.player2Id === userId;
+
+    // Already a member — just hand back the current state.
+    if (alreadyInRoom) {
+      return apiSuccess({ room, joined: false });
     }
 
-    let updateData: any = {};
-    let assignedRole: ParticipantRole = "GUEST";
-    let whereCondition: any = { id: room.id };
+    if (room.contest?.isSolo) {
+      return apiError("This is a solo practice room", 403, {
+        code: "SOLO_ROOM",
+      });
+    }
+
+    const otherRoom = await findActiveRoomForUser(userId);
+    if (otherRoom && otherRoom.code !== code) {
+      return apiError(
+        `You're already in room ${otherRoom.code}. Leave it before joining another.`,
+        409,
+        { code: "ALREADY_IN_ROOM", details: { code: otherRoom.code } },
+      );
+    }
+
+    // ── Work out the slot ────────────────────────────────────────────────
+    const isSupervised = room.hostingType === "SUPERVISED";
+    let data: Prisma.RoomUpdateInput;
+    let where: Prisma.RoomWhereUniqueInput;
+    let role: ParticipantRole;
 
     if (!isSupervised) {
-      // ── PLAYER HOST MODE (Host vs Guest) ──
-      if (room.hostId === guestId) {
-        return apiSuccess({ room });
+      if (room.guestId) {
+        return apiError("This room is already full", 409, { code: "ROOM_FULL" });
       }
-
-      if (room.guestId && room.guestId !== guestId) {
-        return apiError("Room is already full", 400);
-      }
-
-      updateData = {
-        guestId,
-        player1Id: room.hostId,
-        player2Id: guestId,
+      where = { id: room.id, guestId: null };
+      data = {
+        guest: { connect: { id: userId } },
+        player1: { connect: { id: room.hostId } },
+        player2: { connect: { id: userId } },
       };
-      assignedRole = "GUEST";
-      whereCondition.guestId = null; // Optimistic concurrency: ensure guest hasn't been set yet
+      role = ParticipantRole.GUEST;
+    } else if (!room.player1Id) {
+      where = { id: room.id, player1Id: null };
+      data = { player1: { connect: { id: userId } } };
+      role = ParticipantRole.PLAYER_1;
+    } else if (!room.player2Id) {
+      where = { id: room.id, player2Id: null };
+      data = {
+        player2: { connect: { id: userId } },
+        guest: { connect: { id: userId } },
+      };
+      role = ParticipantRole.PLAYER_2;
     } else {
-      // ── SUPERVISED MODE (Host supervises Player 1 vs Player 2) ──
-      if (room.hostId === guestId) {
-        return apiSuccess({ room });
-      }
-
-      if (room.player1Id === guestId || room.player2Id === guestId) {
-        return apiSuccess({ room });
-      }
-
-      if (!room.player1Id) {
-        updateData = { player1Id: guestId };
-        assignedRole = "PLAYER_1";
-        whereCondition.player1Id = null; // Optimistic concurrency
-      } else if (!room.player2Id) {
-        updateData = { player2Id: guestId, guestId };
-        assignedRole = "PLAYER_2";
-        whereCondition.player2Id = null; // Optimistic concurrency
-      } else {
-        return apiError("Room is already full with 2 contestants", 400);
-      }
-    }
-
-    // Connect user to room using transaction to ensure atomicity
-    let updatedRoom;
-    try {
-      updatedRoom = await prisma.$transaction(async (tx) => {
-        const ur = await tx.room.update({
-          where: whereCondition,
-          data: updateData,
-          include: {
-            host: true,
-            guest: true,
-            player1: true,
-            player2: true,
-            contest: {
-              include: {
-                problems: { orderBy: { indexInContest: "asc" } },
-                participants: { include: { user: true } },
-              },
-            },
-          },
-        });
-
-        // Ensure Participant record exists
-        if (ur.contest) {
-          const existingParticipant = await tx.participant.findFirst({
-            where: { contestId: ur.contest.id, userId: guestId },
-          });
-
-          if (!existingParticipant) {
-            await tx.participant.create({
-              data: {
-                contestId: ur.contest.id,
-                userId: guestId,
-                role: assignedRole,
-              },
-            });
-          }
-        }
-        return ur;
+      return apiError("This room already has two contestants", 409, {
+        code: "ROOM_FULL",
       });
-    } catch (e: any) {
-      if (e.code === "P2025") {
-        return apiError("Room was filled by another user. Try another room.", 409);
-      }
-      throw e;
     }
 
-    if (updatedRoom.contest) {
-      // Re-verify that NEITHER contestant has solved any problem in the room!
-      const p1User = updatedRoom.player1 || updatedRoom.host;
-      const p2User = updatedRoom.player2 || updatedRoom.guest;
+    try {
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.room.update({ where, data });
 
-      if (p1User && p2User) {
-        const [p1Solved, p2Solved] = await Promise.all([
-          fetchCFUserSolvedKeys(p1User.handle),
-          fetchCFUserSolvedKeys(p2User.handle),
-        ]);
-
-        const hasSolvedProblem = updatedRoom.contest.problems.some(
-          (p) => p1Solved.has(p.problemKey) || p2Solved.has(p.problemKey)
-        );
-
-        if (hasSolvedProblem) {
-          console.log(`Re-generating problems for room ${uppercaseCode} for competitors ${p1User.handle} & ${p2User.handle}`);
-          await prisma.problem.deleteMany({
-            where: { contestId: updatedRoom.contest.id },
-          });
-
-          const newProblems = await generateContest({
-            name: updatedRoom.contest.name,
-            mode: updatedRoom.contest.mode,
-            problemCount: updatedRoom.contest.problemCount,
-            durationMinutes: updatedRoom.contest.durationMinutes,
-            minRating: updatedRoom.contest.minRating,
-            maxRating: updatedRoom.contest.maxRating,
-            allowedTags: updatedRoom.contest.allowedTags,
-            excludedTags: updatedRoom.contest.excludedTags,
-            seed: updatedRoom.contest.seed,
-            hostHandle: p1User.handle,
-            guestHandle: p2User.handle,
-          });
-
-          await prisma.problem.createMany({
-            data: newProblems.map((p) => ({
-              contestId: updatedRoom.contest!.id,
-              problemKey: p.problemKey,
-              name: p.name,
-              rating: p.rating,
-              tags: p.tags,
-              indexInContest: p.indexInContest,
-            })),
+        if (room.contest) {
+          // The unique constraint on (contestId, userId) makes this safe to
+          // run concurrently — the old findFirst/create pair was not.
+          await tx.participant.upsert({
+            where: {
+              contestId_userId: { contestId: room.contest.id, userId },
+            },
+            create: { contestId: room.contest.id, userId, role },
+            update: {},
           });
         }
+
+        // Fill in the opponent on a pending best-of series.
+        if (updated.seriesId && !isSupervised) {
+          await tx.matchSeries.updateMany({
+            where: { id: updated.seriesId, player2Id: null },
+            data: { player2Id: userId },
+          });
+        }
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2025"
+      ) {
+        return apiError("Someone else took the last slot", 409, {
+          code: "ROOM_FULL",
+        });
       }
+      throw error;
     }
 
-    // Refetch clean room data
-    const finalRoom = await prisma.room.findUnique({
+    // ── Re-verify the problem set against both histories ─────────────────
+    const withPlayers = await prisma.room.findUnique({
       where: { id: room.id },
-      include: {
-        host: true,
-        guest: true,
-        player1: true,
-        player2: true,
-        contest: {
-          include: {
-            problems: { orderBy: { indexInContest: "asc" } },
-            participants: { include: { user: true } },
-          },
-        },
-      },
+      include: ROOM_INCLUDE,
     });
 
-    return apiSuccess({ room: finalRoom });
+    if (withPlayers?.contest && withPlayers.status === "WAITING") {
+      const p1 = withPlayers.player1 ?? withPlayers.host;
+      const p2 = withPlayers.player2 ?? withPlayers.guest;
+
+      if (p1 && p2) {
+        try {
+          await regenerateIfAlreadySolved(withPlayers.contest, p1.handle, p2.handle);
+        } catch (error) {
+          // A CF outage here should not block the join — the contest can still
+          // run with the original problem set.
+          console.error("[rooms/join] problem re-verification failed:", error);
+        }
+      }
+    }
+
+    void new BroadcastService(code)
+      .broadcastPlayerJoined(joiningUser.handle)
+      .catch(() => {});
+
+    const finalRoom = await prisma.room.findUnique({
+      where: { id: room.id },
+      include: ROOM_INCLUDE,
+    });
+
+    return apiSuccess({ room: finalRoom, joined: true });
   } catch (error) {
-    console.error("Join room API error:", error);
-    return apiError("Internal server error", 500);
+    return handleUnexpected("rooms/[code]/join", error);
   }
+}
+
+/**
+ * Replaces the problem set if either contestant has an accepted submission for
+ * any of the selected problems.
+ */
+async function regenerateIfAlreadySolved(
+  contest: {
+    id: string;
+    name: string;
+    mode: string;
+    problemCount: number;
+    durationMinutes: number;
+    minRating: number;
+    maxRating: number;
+    allowedTags: string[];
+    excludedTags: string[];
+    tagMatchMode: string;
+    seed: string;
+    problems: { problemKey: string }[];
+  },
+  hostHandle: string,
+  guestHandle: string,
+): Promise<void> {
+  const [hostSolved, guestSolved] = await Promise.all([
+    fetchCFUserSolvedKeys(hostHandle),
+    fetchCFUserSolvedKeys(guestHandle),
+  ]);
+
+  const stale = contest.problems.some(
+    (p) => hostSolved.has(p.problemKey) || guestSolved.has(p.problemKey),
+  );
+  if (!stale) return;
+
+  const replacements = await generateContest({
+    name: contest.name,
+    mode: contest.mode as "BLITZ" | "CLASSIC" | "LOCKOUT",
+    problemCount: contest.problemCount,
+    durationMinutes: contest.durationMinutes,
+    minRating: contest.minRating,
+    maxRating: contest.maxRating,
+    allowedTags: contest.allowedTags,
+    excludedTags: contest.excludedTags,
+    tagMatchMode: contest.tagMatchMode as "ANY" | "ALL",
+    seed: `${contest.seed}-${guestHandle}`,
+    hostHandle,
+    guestHandle,
+  });
+
+  if (replacements.length === 0) return;
+
+  await prisma.$transaction([
+    prisma.problem.deleteMany({ where: { contestId: contest.id } }),
+    prisma.problem.createMany({
+      data: replacements.map((p) => ({
+        contestId: contest.id,
+        problemKey: p.problemKey,
+        name: p.name,
+        rating: p.rating,
+        tags: p.tags,
+        indexInContest: p.indexInContest,
+      })),
+    }),
+    prisma.contest.update({
+      where: { id: contest.id },
+      data: { problemCount: replacements.length },
+    }),
+  ]);
 }

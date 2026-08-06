@@ -1,952 +1,434 @@
 "use client";
 
-import React, { useEffect, useState, use, useRef } from "react";
-import { useRouter } from "next/navigation";
+import React, { use, useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import confetti from "canvas-confetti";
+import { useRouter } from "next/navigation";
 import {
-  Swords, Clock, Zap, Shield, ExternalLink, CheckCircle2, Lock,
-  Trophy, AlertCircle, Activity, LogOut, Eye, ArrowLeft, Medal,
+  Activity,
+  Clock,
+  Eye,
+  LogOut,
+  Shield,
+  Swords,
+  Trophy,
+  Zap,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
-import { createClient } from "@/utils/supabase/client";
+import { apiFetch, errorMessage } from "@/lib/api-client";
+import { cn } from "@/lib/cn";
+import { formatCountdown } from "@/lib/format";
+import {
+  Alert,
+  Badge,
+  Button,
+  buttonStyles,
+  ConfirmDialog,
+  ErrorScreen,
+  LoadingScreen,
+  Modal,
+  useToast,
+} from "@/components/ui";
+import { useArena } from "@/components/arena/useArena";
+import {
+  ProblemPanel,
+  ProblemPills,
+  type ProblemStatus,
+} from "@/components/arena/ProblemPanel";
+import { ActivityFeed, Scoreboard } from "@/components/arena/Scoreboard";
+import { ResultsScreen } from "@/components/arena/ResultsScreen";
+import type { ArenaProblem } from "@/components/arena/types";
 
-const DEFAULT_AVATAR = "https://codeforces.org/s/0/images/user-alt.png";
+type MobileTab = "problem" | "board" | "feed";
 
-export default function ArenaPage({ params }: { params: Promise<{ code: string }> }) {
+const TABS: { id: MobileTab; label: string; icon: React.ElementType }[] = [
+  { id: "problem", label: "Problem", icon: Swords },
+  { id: "board", label: "Score", icon: Trophy },
+  { id: "feed", label: "Activity", icon: Activity },
+];
+
+export default function ArenaPage({
+  params,
+}: {
+  params: Promise<{ code: string }>;
+}) {
   const { code: rawCode } = use(params);
   const code = rawCode.toUpperCase();
-  const { user } = useUser();
-  const userRef = useRef(user);
-  useEffect(() => { userRef.current = user; }, [user]);
+
   const router = useRouter();
+  const toast = useToast();
+  const { user } = useUser();
+  const arena = useArena(code);
 
-  const [supabase] = useState(() => createClient());
+  const [tab, setTab] = useState<MobileTab>("problem");
+  const [confirmQuit, setConfirmQuit] = useState(false);
+  const [quitting, setQuitting] = useState(false);
 
-  const [room, setRoom] = useState<any>(null);
-  const [contest, setContest] = useState<any>(null);
-  const [problems, setProblems] = useState<any[]>([]);
-  const [selectedProblemIndex, setSelectedProblemIndex] = useState<number>(0);
-  const [recentActions, setRecentActions] = useState<any[]>([]);
-  const [standings, setStandings] = useState<any>(null);
-  const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
-  const [isFinished, setIsFinished] = useState<boolean>(false);
-  const [winnerInfo, setWinnerInfo] = useState<any>(null);
-  const [notification, setNotification] = useState<string | null>(null);
-  const [blitzUnlockCountdown, setBlitzUnlockCountdown] = useState<number | null>(null);
-  const [resignationModalInfo, setResignationModalInfo] = useState<any>(null);
+  const {
+    room,
+    contest,
+    problems,
+    submissions,
+    standings,
+    player1,
+    player2,
+    isSupervised,
+    isSupervisor,
+    remainingSeconds,
+    isFinished,
+    winnerInfo,
+    rematchInvite,
+    dismissRematchInvite,
+    blitzCountdown,
+    selectedIndex,
+    setSelectedIndex,
+    loadError,
+  } = arena;
 
-  useEffect(() => {
-    let isMounted = true;
-    let evalInterval: NodeJS.Timeout | null = null;
-    let channel: any = null;
-    let retryTimeout: NodeJS.Timeout | null = null;
-    const currentUser = userRef.current;
+  const activeBlitzIndex = useMemo(
+    () =>
+      contest?.mode === "BLITZ"
+        ? problems.findIndex((p) => !p.lockedWinnerId)
+        : -1,
+    [contest?.mode, problems],
+  );
 
-    async function loadArenaData() {
-      try {
-        const res = await fetch(`/api/rooms/${code}`);
-        const data = await res.json();
-        if (!res.ok || !data.room || !data.room.contest) {
-          if (res.status === 404) {
-            router.push("/");
-          } else if (isMounted) {
-            // Retry after 2s if room isn't ready yet (e.g. just started)
-            retryTimeout = setTimeout(loadArenaData, 2000);
-          }
-          return;
-        }
+  const statusOf = useCallback(
+    (problem: ArenaProblem, index: number): ProblemStatus => {
+      const lockedAhead =
+        contest?.mode === "BLITZ" &&
+        activeBlitzIndex !== -1 &&
+        index > activeBlitzIndex;
 
-        const rm = data.room;
-        const ct = rm.contest;
-        
-        if (rm.status === "CANCELLED") {
-          router.push("/");
-          return;
-        }
+      const claimed =
+        (contest?.mode === "LOCKOUT" || contest?.mode === "BLITZ") &&
+        problem.lockedWinnerId != null;
 
-        if (isMounted) {
-          setRoom(rm);
-          setContest(ct);
-          setProblems(ct.problems || []);
+      const lockedBy =
+        problem.lockedWinnerId === player1?.id
+          ? player1
+          : problem.lockedWinnerId === player2?.id
+            ? player2
+            : null;
 
-          const initialActions = (ct.submissions || [])
-            .slice()
-            .reverse()
-            .map((sub: any) => ({ type: "SUBMISSION", action: sub }));
-          setRecentActions(initialActions);
+      const mine = submissions.some(
+        (s) =>
+          user &&
+          s.userId === user.id &&
+          s.problemId === problem.id &&
+          s.verdict === "OK",
+      );
+      const theirs = submissions.some(
+        (s) =>
+          user &&
+          s.userId !== user.id &&
+          s.problemId === problem.id &&
+          s.verdict === "OK",
+      );
 
-          if (ct.status === "FINISHED") setIsFinished(true);
+      return {
+        isLocked: Boolean(claimed || lockedAhead),
+        lockedAhead: Boolean(lockedAhead && !claimed),
+        lockedBy,
+        solvedByMe: mine,
+        solvedByOpponent: theirs,
+      };
+    },
+    [contest?.mode, activeBlitzIndex, player1, player2, submissions, user],
+  );
 
-          if (ct.startTime) {
-            const start = new Date(ct.startTime).getTime();
-            const duration = ct.durationMinutes * 60 * 1000;
-            const end = start + duration;
-            const now = Date.now();
-            setRemainingSeconds(Math.max(0, Math.floor((end - now) / 1000)));
-          }
-        }
-
-        channel = supabase.channel(`room-${code}`);
-
-        channel
-          .on("broadcast", { event: "new-recent-action" }, (payload: any) => {
-            const item = payload.payload;
-            if (isMounted) {
-              setRecentActions((prev) => {
-                if (item.type === "SUBMISSION") {
-                  const subId = String(item.action?.id || item.action?.cfSubmissionId);
-                  const existsIdx = prev.findIndex(
-                    (p) => p.type === "SUBMISSION" && String(p.action?.id || p.action?.cfSubmissionId) === subId
-                  );
-                  if (existsIdx !== -1) {
-                    const updated = [...prev];
-                    updated[existsIdx] = item;
-                    return updated;
-                  }
-                }
-                return [item, ...prev];
-              });
-
-              if (item.type === "SUBMISSION") {
-                const sub = item.action;
-                const currentUser = userRef.current;
-                const isMe = currentUser && sub.userId === currentUser.id;
-                const solverName = isMe ? "You" : sub.user?.handle || "Opponent";
-                if (sub.verdict === "OK") {
-                  setNotification(`🎉 ${solverName} solved ${sub.problem?.name || "a problem"}!`);
-                  setTimeout(() => setNotification(null), 5000);
-                } else if (sub.verdict === "TESTING") {
-                  setNotification(`⏳ ${solverName} submitted solution for ${sub.problem?.name} (Testing...)`);
-                  setTimeout(() => setNotification(null), 4000);
-                } else {
-                  setNotification(`⚠️ ${solverName} got ${sub.verdict} on ${sub.problem?.name}`);
-                  setTimeout(() => setNotification(null), 4000);
-                }
-              }
-            }
-          })
-          .on("broadcast", { event: "problems-update" }, (payload: any) => {
-            if (isMounted) setProblems(payload.payload.problems);
-          })
-          .on("broadcast", { event: "scoreboard-update" }, (payload: any) => {
-            if (isMounted) setStandings(payload.payload.standings);
-          })
-          .on("broadcast", { event: "blitz-problem-locked" }, (payload: any) => {
-            if (isMounted) {
-              const { winnerHandle } = payload.payload;
-              setNotification(`⚡ ${winnerHandle} locked a problem!`);
-              setTimeout(() => setNotification(null), 5000);
-            }
-          })
-          .on("broadcast", { event: "strict-blitz-problem-locked" }, (payload: any) => {
-            if (isMounted) {
-              const { winnerHandle, nextIndex } = payload.payload;
-              setNotification(`⚡ ${winnerHandle} locked the current problem! Moving to Problem ${String.fromCharCode(65 + nextIndex)}...`);
-              setBlitzUnlockCountdown(3);
-              const interval = setInterval(() => {
-                setBlitzUnlockCountdown((prev) => {
-                  if (prev === null || prev <= 1) {
-                    clearInterval(interval);
-                    setSelectedProblemIndex(nextIndex);
-                    return null;
-                  }
-                  return prev - 1;
-                });
-              }, 1000);
-            }
-          })
-          .on("broadcast", { event: "contest-finished" }, (payload: any) => {
-            if (isMounted) {
-              const currentUser = userRef.current;
-              if (payload.payload.reason === "resignation" && currentUser && currentUser.id !== payload.payload.resignedUserId) {
-                setResignationModalInfo(payload.payload);
-              } else {
-                setIsFinished(true);
-                setWinnerInfo(payload.payload);
-                if (currentUser && payload.payload.winnerId === currentUser.id) {
-                  confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-                }
-              }
-            }
-          })
-          .subscribe();
-
-        // Trigger Evaluation Engine & Sync State via API Polling for participants
-        const currentUser = userRef.current;
-        const isParticipant = currentUser && (rm.hostId === currentUser.id || rm.player1Id === currentUser.id || rm.guestId === currentUser.id || rm.player2Id === currentUser.id);
-        
-        if (ct.status !== "FINISHED" && isParticipant) {
-          evalInterval = setInterval(async () => {
-            try {
-              const evalRes = await fetch(`/api/contests/${ct.id}/evaluate`, { method: "POST" });
-              const evalData = await evalRes.json();
-              if (evalRes.ok && evalData && isMounted) {
-                if (evalData.standings) setStandings(evalData.standings);
-                if (evalData.problems) setProblems(evalData.problems);
-                if (evalData.submissions) {
-                  const actions = evalData.submissions.map((sub: any) => ({ type: "SUBMISSION", action: sub }));
-                  setRecentActions(actions);
-                }
-                if (evalData.contestStatus === "FINISHED") {
-                  setIsFinished(true);
-                  if (evalData.winnerInfo) {
-                    setWinnerInfo(evalData.winnerInfo);
-                    const currentUser = userRef.current;
-                    if (currentUser && evalData.winnerInfo.winnerId === currentUser.id) {
-                      confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-                    }
-                  }
-                }
-              }
-            } catch (err) {
-              console.error("Evaluation fetch error:", err);
-            }
-          }, 5000);
-        }
-      } catch (err) {
-        console.error("Arena init error:", err);
-        // Retry on unexpected errors
-        if (isMounted) {
-          retryTimeout = setTimeout(loadArenaData, 2000);
-        }
-      }
-    }
-
-    loadArenaData();
-
-    return () => {
-      isMounted = false;
-      if (evalInterval) clearInterval(evalInterval);
-      if (retryTimeout) clearTimeout(retryTimeout);
-      if (channel) supabase.removeChannel(channel);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code, router, supabase]); // Intentionally omit `user` — using userRef to avoid re-mounting on auth change
-
-  useEffect(() => {
-    if (isFinished || remainingSeconds <= 0) return;
-    const timer = setInterval(() => {
-      setRemainingSeconds((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          setIsFinished(true);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [isFinished, remainingSeconds]);
-
-  const handleLeaveContest = async () => {
-    if (!user) { router.push("/"); return; }
-    const confirmed = window.confirm("Are you sure you want to quit the contest? You will resign but can still spectate.");
-    if (!confirmed) return;
+  async function quitContest() {
+    setQuitting(true);
     try {
-      await fetch(`/api/rooms/${code}/leave`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id }),
-      });
-      setNotification("You have resigned from the contest.");
-      setTimeout(() => setNotification(null), 4000);
-    } catch (e) {
-      console.error("Error leaving contest:", e);
+      await apiFetch(`/api/rooms/${code}/leave`, { method: "POST", body: {} });
+      toast.push("You resigned. You can still watch the rest.", "warning");
+    } catch (err) {
+      toast.push(errorMessage(err, "Couldn't resign."), "danger");
+    } finally {
+      setQuitting(false);
+      setConfirmQuit(false);
     }
-  };
+  }
 
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  };
-
-  const formatActionTime = (isoString?: string) => {
-    if (!isoString) return "";
-    const d = new Date(isoString);
-    if (isNaN(d.getTime())) return "";
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  };
-
-  const formatSolveTime = (seconds: number | null) => {
-    if (!seconds) return "—";
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `+${m}m${s > 0 ? `${s}s` : ""}`;
-  };
+  // ── Loading / error ──────────────────────────────────────────────────────
+  if (loadError) {
+    return (
+      <ErrorScreen
+        title={loadError}
+        message="Check the room code, or head home to start a new duel."
+      />
+    );
+  }
 
   if (!room || !contest) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60vh", gap: 16 }}>
-        <div className="animate-float" style={{ width: 64, height: 64, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "var(--r-md)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Swords style={{ width: 28, height: 28, color: "var(--text-primary)" }} />
-        </div>
-        <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>Entering Duel Arena...</p>
-      </div>
+      <LoadingScreen
+        icon={<Swords className="size-6" />}
+        message="Entering the arena…"
+      />
     );
   }
 
-  const isSupervised = room.hostingType === "SUPERVISED";
-  const player1 = isSupervised ? room.player1 : room.host;
-  const player2 = isSupervised ? room.player2 : room.guest;
-
-  // ── Finished Contest Results View ──
-  // Shown when navigating to a completed contest (e.g. from match history)
-  if (contest.status === "FINISHED" && isFinished) {
-    const submissions: any[] = recentActions
-      .filter((a) => a.type === "SUBMISSION")
-      .map((a) => a.action)
-      .sort((a, b) => new Date(a.timeSubmitted).getTime() - new Date(b.timeSubmitted).getTime());
-
-    // Build per-player stats
-    function getPlayerStats(playerId: string | null) {
-      if (!playerId) return { accepted: 0, penalty: 0, locked: 0, points: 0 };
-      let accepted = 0, penalty = 0, locked = 0, points = 0;
-      for (let idx = 0; idx < problems.length; idx++) {
-        const prob = problems[idx];
-        const probSubs = submissions
-          .filter((s) => s.userId === playerId && s.problemId === prob.id)
-          .sort((a, b) => new Date(a.timeSubmitted).getTime() - new Date(b.timeSubmitted).getTime());
-        const ac = probSubs.find((s) => s.verdict === "OK");
-        if (ac) {
-          accepted++;
-          const wrongBefore = probSubs.filter(
-            (s) => new Date(s.timeSubmitted) < new Date(ac.timeSubmitted) && s.verdict !== "OK"
-          ).length;
-          penalty += Math.floor((ac.solveTimeSeconds || 0) / 60) + wrongBefore * 20;
-        }
-        if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
-          if (prob.lockedWinnerId === playerId) locked++;
-        }
-        
-        if (contest.pointingSystem === "POINTS") {
-          const probPoints = ((prob.indexInContest ?? idx) + 1) * 100;
-          if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
-            if (prob.lockedWinnerId === playerId) points += probPoints;
-          } else {
-            if (ac) points += probPoints;
-          }
-        }
-      }
-      return { accepted, penalty, locked, points };
-    }
-
-    const p1Stats = getPlayerStats(player1?.id);
-    const p2Stats = getPlayerStats(player2?.id);
-
-    let winnerId: string | null = null;
-    if (contest.pointingSystem === "POINTS") {
-      if (p1Stats.points > p2Stats.points) winnerId = player1?.id;
-      else if (p2Stats.points > p1Stats.points) winnerId = player2?.id;
-      else if (p1Stats.penalty < p2Stats.penalty) winnerId = player1?.id;
-      else if (p2Stats.penalty < p1Stats.penalty) winnerId = player2?.id;
-    } else if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") {
-      if (p1Stats.locked > p2Stats.locked) winnerId = player1?.id;
-      else if (p2Stats.locked > p1Stats.locked) winnerId = player2?.id;
-    } else {
-      if (p1Stats.accepted > p2Stats.accepted) winnerId = player1?.id;
-      else if (p2Stats.accepted > p1Stats.accepted) winnerId = player2?.id;
-      else if (p1Stats.penalty < p2Stats.penalty) winnerId = player1?.id;
-      else if (p2Stats.penalty < p1Stats.penalty) winnerId = player2?.id;
-    }
-    const isDraw = winnerId === null;
-    const winnerHandle = winnerId === player1?.id ? player1?.handle : winnerId === player2?.id ? player2?.handle : null;
+  // ── Finished ─────────────────────────────────────────────────────────────
+  if (isFinished) {
+    const isPlayer = Boolean(
+      user && (user.id === player1?.id || user.id === player2?.id),
+    );
 
     return (
-      <div className="stagger-children" style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+      <>
+        <ResultsScreen
+          code={code}
+          contest={contest}
+          problems={problems}
+          submissions={submissions}
+          standings={standings}
+          player1={player1}
+          player2={player2}
+          winnerInfo={winnerInfo}
+          series={winnerInfo?.series ?? room.series}
+          currentUserId={user?.id}
+          canRematch={isPlayer && !contest.isSolo}
+        />
 
-        {/* Header */}
-        <div style={{ paddingBottom: "24px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ width: 48, height: 48, background: "rgba(245,158,11,0.1)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Trophy style={{ width: 22, height: 22, color: "var(--warning)" }} />
+        <Modal
+          open={Boolean(rematchInvite)}
+          onClose={dismissRematchInvite}
+          title="Rematch ready"
+          icon={<Swords className="size-5" />}
+          description={`${rematchInvite?.createdByHandle} wants to go again`}
+          footer={
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="ghost" onClick={dismissRematchInvite}>
+                Not now
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const target = rematchInvite?.code;
+                  dismissRematchInvite();
+                  if (target) router.push(`/room/${target}`);
+                }}
+              >
+                Join room {rematchInvite?.code}
+              </Button>
             </div>
-            <div>
-              <h1 style={{ fontWeight: 800, fontSize: "2rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.05em" }}>{contest.name}</h1>
-              <p className="font-mono" style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0" }}>
-                Room {code} • {contest.mode} • {contest.durationMinutes}min
-              </p>
-            </div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ padding: "6px 14px", borderRadius: "100px", background: "rgba(239,68,68,0.1)", color: "var(--danger)", fontSize: "0.8rem", fontWeight: 700, letterSpacing: "0.05em" }}>FINISHED</span>
-            <Link href="/" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 20px", borderRadius: "100px", background: "rgba(255,255,255,0.05)", color: "#FFFFFF", fontSize: "0.9rem", fontWeight: 600, textDecoration: "none", border: "1px solid rgba(255,255,255,0.1)" }}>
-              <ArrowLeft style={{ width: 14, height: 14 }} /> Home
-            </Link>
-          </div>
-        </div>
-
-        {/* Winner banner */}
-        <div style={{
-          padding: "24px",
-          background: isDraw ? "rgba(255,255,255,0.02)" : "rgba(245,158,11,0.05)",
-          border: `1px solid ${isDraw ? "rgba(255,255,255,0.05)" : "rgba(245,158,11,0.2)"}`,
-          borderRadius: "16px",
-          textAlign: "center",
-        }}>
-          <div style={{ fontWeight: 800, fontSize: "1.5rem", color: isDraw ? "#FFFFFF" : "var(--warning)", letterSpacing: "-0.02em" }}>
-            {isDraw ? "It's a Draw!" : `${winnerHandle} Wins!`}
-          </div>
-        </div>
-
-        {/* Leaderboard */}
-        <div style={{ marginTop: "16px" }}>
-          <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: "0.8rem", color: "var(--text-muted)", letterSpacing: "0.15em", marginBottom: 20, textTransform: "uppercase" }}>
-            <Medal style={{ width: 16, height: 16, color: "var(--warning)" }} /> Leaderboard
-          </h2>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {[{ player: player1, stats: p1Stats, label: "Player 1" }, { player: player2, stats: p2Stats, label: "Player 2" }]
-              .sort((a, b) => {
-                if (contest.pointingSystem === "POINTS") {
-                  if (b.stats.points !== a.stats.points) return b.stats.points - a.stats.points;
-                  return a.stats.penalty - b.stats.penalty;
-                }
-                if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") return b.stats.locked - a.stats.locked;
-                if (b.stats.accepted !== a.stats.accepted) return b.stats.accepted - a.stats.accepted;
-                return a.stats.penalty - b.stats.penalty;
-              })
-              .map(({ player, stats, label }, rank) => (
-                <div key={player?.id || label} style={{
-                  padding: "24px 0",
-                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                  borderBottom: "1px solid rgba(255,255,255,0.05)",
-                  background: player?.id === winnerId ? "radial-gradient(ellipse at center, rgba(245,158,11,0.05) 0%, transparent 70%)" : "transparent"
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                    <span style={{ fontSize: "1.5rem" }}>{rank === 0 ? "🥇" : "🥈"}</span>
-                    <img src={player?.avatar || DEFAULT_AVATAR} alt={player?.handle} style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover" }} />
-                    <div>
-                      <div style={{ fontWeight: 800, color: "#FFFFFF", fontSize: "1.2rem", letterSpacing: "-0.02em" }}>{player?.handle || label}</div>
-                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 4 }}>{label}</div>
-                    </div>
-                  </div>
-                  <div className="font-mono" style={{ textAlign: "right" }}>
-                    <div style={{ fontWeight: 800, fontSize: "1.1rem", color: "var(--success)" }}>
-                      {contest.pointingSystem === "POINTS" ? `${stats.points} Points` : (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? `${stats.locked} Locked` : `${stats.accepted} Solved`}
-                    </div>
-                    {(contest.mode === "CLASSIC" || contest.pointingSystem === "POINTS") && (
-                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>+{stats.penalty}m penalty</div>
-                    )}
-                  </div>
-                </div>
-              ))
-            }
-          </div>
-        </div>
-
-        {/* Problems — who solved each and when */}
-        <div style={{ marginTop: "16px" }}>
-          <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: "0.8rem", color: "var(--text-muted)", letterSpacing: "0.15em", marginBottom: 16, textTransform: "uppercase" }}>
-            <Swords style={{ width: 16, height: 16, color: "var(--accent)" }} /> Problems
-          </h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {problems.map((prob: any, idx: number) => {
-              const p1AC = submissions.find((s) => s.problemId === prob.id && s.userId === player1?.id && s.verdict === "OK");
-              const p2AC = submissions.find((s) => s.problemId === prob.id && s.userId === player2?.id && s.verdict === "OK");
-              const activeIdx = contest.mode === "BLITZ" ? problems.findIndex((p: any) => !p.lockedWinnerId) : -1;
-              const isFutureLocked = contest.mode === "BLITZ" && idx > activeIdx && activeIdx !== -1;
-              const isLocked = ((contest.mode === "LOCKOUT" || contest.mode === "BLITZ") && prob.lockedWinnerId != null) || isFutureLocked;
-              const lockerHandle = prob.lockedWinnerId === player1?.id ? player1?.handle : prob.lockedWinnerId === player2?.id ? player2?.handle : null;
-              return (
-                <div key={prob.id} style={{ padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "12px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span className="font-mono" style={{ fontWeight: 800, fontSize: "1.2rem", color: "var(--accent)", width: 24 }}>{String.fromCharCode(65 + idx)}</span>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: "1rem", color: "#FFFFFF" }}>{prob.name}</div>
-                      <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-                        <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.7rem", color: "var(--warning)", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)", fontWeight: 600 }}>Rating: {prob.rating}</span>
-                        {contest.pointingSystem === "POINTS" && (
-                          <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.7rem", color: "var(--success)", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", fontWeight: 600 }}>
-                            Points: {((prob.indexInContest ?? idx) + 1) * 100}
-                          </span>
-                        )}
-                        <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.7rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "var(--text-secondary)", fontWeight: 600 }}>{prob.problemKey}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                    {isLocked && prob.lockedWinnerId != null && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "100px", background: "rgba(239,68,68,0.1)", color: "var(--danger)", fontSize: "0.75rem", fontWeight: 600 }}>
-                        <Lock style={{ width: 12, height: 12 }} /> Locked by {lockerHandle}
-                      </span>
-                    )}
-                    {isLocked && prob.lockedWinnerId == null && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "100px", background: "rgba(255,255,255,0.05)", color: "var(--text-muted)", fontSize: "0.75rem", fontWeight: 600 }}>
-                        <Lock style={{ width: 12, height: 12 }} /> Locked
-                      </span>
-                    )}
-                    {p1AC && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "100px", background: "rgba(16,185,129,0.1)", color: "var(--success)", fontSize: "0.75rem", fontWeight: 600 }}>
-                        <CheckCircle2 style={{ width: 12, height: 12 }} /> {player1?.handle} {formatSolveTime(p1AC.solveTimeSeconds)}
-                      </span>
-                    )}
-                    {p2AC && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "100px", background: "rgba(16,185,129,0.1)", color: "var(--success)", fontSize: "0.75rem", fontWeight: 600 }}>
-                        <CheckCircle2 style={{ width: 12, height: 12 }} /> {player2?.handle} {formatSolveTime(p2AC.solveTimeSeconds)}
-                      </span>
-                    )}
-                    {!p1AC && !p2AC && (
-                      <span style={{ padding: "6px 12px", borderRadius: "100px", fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)" }}>Unsolved</span>
-                    )}
-                    <a href={`https://codeforces.com/problemset/problem/${prob.problemKey?.replace("-", "/")}`} target="_blank" rel="noreferrer"
-                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: "100px", background: "rgba(255,255,255,0.05)", color: "#FFF", fontSize: "0.75rem", fontWeight: 600, textDecoration: "none", border: "1px solid rgba(255,255,255,0.1)" }}>
-                      <ExternalLink style={{ width: 12, height: 12 }} /> CF
-                    </a>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Submission log */}
-        <div style={{ marginTop: "16px" }}>
-          <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: "0.8rem", color: "var(--text-muted)", letterSpacing: "0.15em", marginBottom: 16, textTransform: "uppercase" }}>
-            <Activity style={{ width: 16, height: 16, color: "var(--accent)" }} /> Submission Log
-          </h2>
-          {submissions.length === 0 ? (
-            <div style={{ padding: "40px", textAlign: "center", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "16px" }}>
-              <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.9rem", margin: 0 }}>No submissions recorded.</p>
-            </div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 6px" }}>
-                <thead>
-                  <tr>
-                    {["Time", "Player", "Problem", "Verdict", "Solve Time"].map((h) => (
-                      <th key={h} style={{ textAlign: "left", padding: "0 16px 12px", fontWeight: 700, fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {submissions.map((sub: any, i: number) => (
-                    <tr key={sub.id || i}>
-                      <td className="font-mono" style={{ padding: "8px 12px", fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                        {formatActionTime(sub.timeSubmitted)}
-                      </td>
-                      <td style={{ padding: "8px 12px", fontWeight: 600, fontSize: "0.82rem", color: "var(--text-primary)" }}>
-                        {sub.user?.handle || "—"}
-                      </td>
-                      <td className="font-mono" style={{ padding: "8px 12px", fontSize: "0.78rem", color: "var(--text-secondary)" }}>
-                        {sub.problem?.name || "—"}
-                      </td>
-                      <td style={{ padding: "8px 12px" }}>
-                        <span className="font-mono" style={{
-                          fontSize: "0.65rem", fontWeight: 700, padding: "4px 8px", borderRadius: "100px",
-                          background: sub.verdict === "OK" ? "rgba(16,185,129,0.1)" : sub.verdict === "TESTING" ? "rgba(245,158,11,0.1)" : "rgba(239,68,68,0.1)",
-                          color: sub.verdict === "OK" ? "var(--success)" : sub.verdict === "TESTING" ? "var(--warning)" : "var(--danger)",
-                          border: sub.verdict === "OK" ? "1px solid rgba(16,185,129,0.2)" : sub.verdict === "TESTING" ? "1px solid rgba(245,158,11,0.2)" : "1px solid rgba(239,68,68,0.2)"
-                        }}>
-                          {sub.verdict === "OK" ? "AC" : sub.verdict?.replace(/_/g, " ")}
-                        </span>
-                      </td>
-                      <td className="font-mono" style={{ padding: "8px 12px", fontSize: "0.72rem", color: sub.verdict === "OK" ? "var(--success)" : "var(--text-muted)" }}>
-                        {sub.verdict === "OK" ? formatSolveTime(sub.solveTimeSeconds) : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-      </div>
+          }
+        >
+          <p className="text-sm leading-relaxed text-ink-dim">
+            A fresh room is waiting with the same settings and a brand new
+            problem set.
+          </p>
+        </Modal>
+      </>
     );
   }
 
-  const isSupervisor = user && user.id === room.hostId && isSupervised;
-  const selectedProblem = problems[selectedProblemIndex] || problems[0];
+  // ── Live ─────────────────────────────────────────────────────────────────
+  const isBlitzLike = contest.mode === "BLITZ" || contest.mode === "LOCKOUT";
+  const lowTime = remainingSeconds < 300;
+  const selectedProblem = problems[selectedIndex] ?? problems[0];
 
+  const scoreboard = (
+    <Scoreboard
+      contest={contest}
+      standings={standings}
+      player1={player1}
+      player2={player2}
+      currentUserId={user?.id}
+      isSolo={contest.isSolo}
+    />
+  );
 
-  const activeBlitzIndex = contest.mode === "BLITZ" ? problems.findIndex((p) => !p.lockedWinnerId) : -1;
+  const feed = (
+    <ActivityFeed submissions={submissions} currentUserId={user?.id} />
+  );
 
-  const getProblemStatus = (prob: any, idx: number) => {
-    if (!prob) return { isLocked: false, lockedByPlayer1: false, lockedByPlayer2: false, myAC: false, oppAC: false };
-    const isFutureLocked = contest.mode === "BLITZ" && idx > activeBlitzIndex && activeBlitzIndex !== -1;
-    const isLocked = ((contest.mode === "LOCKOUT" || contest.mode === "BLITZ") && prob.lockedWinnerId != null) || isFutureLocked;
-    const lockedByPlayer1 = prob.lockedWinnerId === player1?.id;
-    const lockedByPlayer2 = prob.lockedWinnerId === player2?.id;
-
-    const myAC = user && recentActions.some(
-      (act) => act.type === "SUBMISSION" && act.action.userId === user.id && act.action.problemId === prob.id && act.action.verdict === "OK"
-    );
-    const oppAC = user && recentActions.some(
-      (act) => act.type === "SUBMISSION" && act.action.userId !== user.id && act.action.problemId === prob.id && act.action.verdict === "OK"
-    );
-
-    return { isLocked, lockedByPlayer1, lockedByPlayer2, myAC, oppAC };
-  };
-
+  const problemArea = (
+    <div className="flex flex-col gap-4">
+      <ProblemPills
+        problems={problems}
+        selectedIndex={selectedIndex}
+        activeBlitzIndex={activeBlitzIndex}
+        onSelect={setSelectedIndex}
+        statusOf={statusOf}
+      />
+      <ProblemPanel
+        problem={selectedProblem}
+        index={selectedIndex}
+        status={
+          selectedProblem
+            ? statusOf(selectedProblem, selectedIndex)
+            : {
+                isLocked: false,
+                lockedAhead: false,
+                lockedBy: null,
+                solvedByMe: false,
+                solvedByOpponent: false,
+              }
+        }
+        pointingSystem={contest.pointingSystem}
+        isSupervisor={isSupervisor}
+        myHandle={user?.handle}
+      />
+    </div>
+  );
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Top Bar */}
-      <div className="animate-fade-in-up" style={{ paddingBottom: "24px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-            background: (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? "rgba(34,197,94,0.1)" : "rgba(250,250,250,0.05)",
-          }}>
-            {(contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? <Zap style={{ width: 22, height: 22, color: "var(--success)" }} /> : <Shield style={{ width: 22, height: 22, color: "#FFF" }} />}
-          </div>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <h1 style={{ fontWeight: 800, fontSize: "1.8rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.05em" }}>{contest.name}</h1>
-              <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.05em", background: (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? "rgba(34,197,94,0.1)" : "rgba(255,255,255,0.1)", color: (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? "var(--success)" : "#FFFFFF" }}>
-                {contest.mode.replace('_', ' ')}
-              </span>
-              {isSupervised && (
-                <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.05em", background: "rgba(245,158,11,0.1)", color: "var(--warning)" }}>
-                  SUPERVISED
-                </span>
+    <div className="flex flex-col gap-5">
+      {/* ── Top bar ───────────────────────────────────────────────────────── */}
+      <header className="flex flex-col gap-4 border-b border-white/6 pb-5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <span
+            className={cn(
+              "flex size-11 shrink-0 items-center justify-center rounded-full",
+              isBlitzLike ? "bg-brand/12" : "bg-white/5",
+            )}
+          >
+            {isBlitzLike ? (
+              <Zap className="size-5 text-brand-bright" />
+            ) : (
+              <Shield className="size-5 text-ink" />
+            )}
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate text-xl font-extrabold tracking-tight text-ink sm:text-2xl">
+                {contest.name}
+              </h1>
+              <Badge tone={isBlitzLike ? "brand" : "neutral"}>
+                {contest.mode}
+              </Badge>
+              {isSupervised && <Badge tone="warning">Supervised</Badge>}
+              {contest.isSolo && <Badge tone="info">Practice</Badge>}
+              {room.series && room.series.bestOf > 1 && (
+                <Badge tone="warning">
+                  Game {room.gameNumber} of {room.series.bestOf}
+                </Badge>
               )}
             </div>
-            <p className="font-mono" style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0 0" }}>Room: <span style={{ color: "#16A34A", fontWeight: 700 }}>{code}</span></p>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 20px", borderRadius: "100px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)" }}>
-            <Clock style={{ width: 20, height: 20, color: remainingSeconds < 300 ? "var(--danger)" : "var(--text-secondary)" }} />
-            <div>
-              <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Remaining</div>
-              <div className="font-mono" style={{ fontSize: "1.3rem", fontWeight: 800, color: remainingSeconds < 300 ? "var(--danger)" : "#FFFFFF", letterSpacing: "0.05em", lineHeight: 1 }}>
-                {formatTime(remainingSeconds)}
-              </div>
-            </div>
-          </div>
-
-          <button onClick={handleLeaveContest} style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: "100px", background: "transparent", color: "var(--danger)", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", border: "1px solid rgba(239,68,68,0.3)" }}>
-            <LogOut style={{ width: 16, height: 16 }} /> QUIT CONTEST
-          </button>
-        </div>
-      </div>
-
-      {isSupervisor && (
-        <div className="animate-fade-in-up" style={{ padding: "16px 20px", background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: "12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: "0.9rem", fontWeight: 600, color: "var(--warning)" }}>
-            <Eye style={{ width: 18, height: 18 }} />
-            <span>You are Supervising this match between {player1?.handle || "Player 1"} and {player2?.handle || "Player 2"}.</span>
-          </div>
-        </div>
-      )}
-
-      {notification && (
-        <div className="animate-fade-in-up" style={{ padding: "16px 20px", background: "rgba(250,250,250,0.05)", border: "1px solid rgba(250,250,250,0.1)", borderRadius: "12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: "0.9rem", fontWeight: 600, color: "#FFFFFF" }}>
-            <Activity style={{ width: 18, height: 18 }} />
-            <span>{notification}</span>
-          </div>
-        </div>
-      )}
-
-      {blitzUnlockCountdown !== null && (
-        <div className="animate-shake" style={{ padding: "16px 20px", background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: "12px", textAlign: "center", fontWeight: 700, color: "var(--warning)", fontSize: "1rem" }}>
-          ⚡ Next problem unlocks in {blitzUnlockCountdown}s...
-        </div>
-      )}
-
-      {resignationModalInfo && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, backdropFilter: "blur(4px)" }}>
-          <div className="animate-fade-in-up" style={{ background: "rgba(20,20,20,0.95)", padding: "32px", borderRadius: "16px", border: "1px solid rgba(255,255,255,0.1)", textAlign: "center", maxWidth: "400px", width: "90%" }}>
-            <AlertCircle style={{ width: 48, height: 48, color: "var(--warning)", margin: "0 auto 16px" }} />
-            <h2 style={{ margin: "0 0 8px", fontSize: "1.5rem", color: "#FFFFFF" }}>Opponent Resigned</h2>
-            <p style={{ color: "var(--text-muted)", marginBottom: "24px", lineHeight: 1.5 }}>
-              The other player has resigned from the contest.
+            <p className="mt-1 font-mono text-[0.78rem] text-ink-faint">
+              Room <span className="font-bold text-brand">{code}</span>
             </p>
-            <button 
-              onClick={() => {
-                setIsFinished(true);
-                setWinnerInfo(resignationModalInfo);
-                setResignationModalInfo(null);
-                const currentUser = userRef.current;
-                if (currentUser && resignationModalInfo.winnerId === currentUser.id) {
-                  confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-                }
-              }} 
-              style={{ padding: "12px 32px", background: "#FFFFFF", color: "#000000", border: "none", borderRadius: "100px", fontWeight: 700, cursor: "pointer", fontSize: "1rem" }}
-            >
-              OK
-            </button>
           </div>
         </div>
-      )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 24 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ padding: "16px", display: "flex", gap: 12, overflowX: "auto", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "16px" }}>
-            {problems.map((prob, idx) => {
-              const status = getProblemStatus(prob, idx);
-              const isSelected = idx === selectedProblemIndex;
-              const isActive = contest.mode === "BLITZ" && idx === activeBlitzIndex;
-
-              return (
-                <button
-                  key={prob.id || idx}
-                  onClick={() => setSelectedProblemIndex(idx)}
-                  disabled={status.isLocked}
-                  className="font-mono"
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                    padding: "10px 20px",
-                    borderRadius: "100px",
-                    fontSize: "0.9rem",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    border: isSelected ? "1px solid rgba(255,255,255,0.8)" : isActive ? "1px solid rgba(245,158,11,0.5)" : "1px solid rgba(255,255,255,0.1)",
-                    background: isSelected ? "#FFFFFF" : isActive ? "rgba(245,158,11,0.1)" : "transparent",
-                    color: isSelected ? "#000000" : isActive ? "var(--warning)" : "#FFFFFF",
-                    opacity: status.isLocked && !isSelected ? 0.3 : 1,
-                  }}
-                >
-                  <span>{String.fromCharCode(65 + idx)}</span>
-                  {status.isLocked ? <Lock style={{ width: 12, height: 12 }} /> : status.myAC ? <CheckCircle2 style={{ width: 12, height: 12, color: "var(--success)" }} /> : null}
-                </button>
-              );
-            })}
-          </div>
-
-          {selectedProblem && (
-            <div style={{ padding: "28px", display: "flex", flexDirection: "column", gap: 20, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "16px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: 24, flexWrap: "wrap" }}>
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
-                    <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.05em", background: "rgba(255,255,255,0.1)", color: "#FFFFFF" }}>
-                      {selectedProblem.problemKey}
-                    </span>
-                    <h2 style={{ fontWeight: 800, fontSize: "1.5rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.02em" }}>
-                      {selectedProblem.name}
-                    </h2>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.7rem", color: "var(--warning)", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)", fontWeight: 600 }}>
-                      Rating: {selectedProblem.rating}
-                    </span>
-                    {contest.pointingSystem === "POINTS" && (
-                      <span style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.7rem", color: "var(--success)", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", fontWeight: 600 }}>
-                        Points: {((selectedProblem.indexInContest ?? selectedProblemIndex) + 1) * 100}
-                      </span>
-                    )}
-                    {(() => {
-                      try {
-                        return JSON.parse(selectedProblem.tags || "[]").map((tag: string) => (
-                          <span key={tag} style={{ padding: "4px 10px", borderRadius: "100px", fontSize: "0.7rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "var(--text-secondary)", fontWeight: 600 }}>
-                            {tag}
-                          </span>
-                        ));
-                      } catch { return null; }
-                    })()}
-                  </div>
-                </div>
-
-                <a
-                  href={`https://codeforces.com/problemset/problem/${selectedProblem.problemKey?.replace("-", "/")}`}
-                  target="_blank" rel="noreferrer"
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: "100px", background: "#FFFFFF", color: "#000000", fontSize: "0.85rem", fontWeight: 700, textDecoration: "none", transition: "transform 0.2s" }}
-                >
-                  <span>Open on Codeforces</span>
-                  <ExternalLink style={{ width: 14, height: 14 }} />
-                </a>
-              </div>
-
-              <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.82rem", flexWrap: "wrap", gap: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "12px" }}>
-                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Problem Status</span>
-                {(() => {
-                  const status = getProblemStatus(selectedProblem, selectedProblemIndex);
-                  if (status.isLocked) {
-                    if (selectedProblem.lockedWinnerId == null) {
-                      return (
-                        <span className="font-mono" style={{ padding: "6px 12px", borderRadius: "100px", background: "rgba(255,255,255,0.05)", color: "var(--text-muted)", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-                          <Lock style={{ width: 14, height: 14 }} /> LOCKED (Solve previous to unlock)
-                        </span>
-                      );
-                    }
-                    const lockerHandle = status.lockedByPlayer1 ? player1?.handle : player2?.handle;
-                    return (
-                      <span className="font-mono" style={{ padding: "6px 12px", borderRadius: "100px", background: "rgba(239,68,68,0.1)", color: "var(--danger)", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-                        <Lock style={{ width: 14, height: 14 }} /> LOCKED by {lockerHandle}
-                      </span>
-                    );
-                  }
-                  if (isSupervisor) {
-                    return <span className="font-mono" style={{ color: "var(--text-muted)", fontWeight: 700 }}>SUPERVISOR VIEW</span>;
-                  }
-                  if (status.myAC) {
-                    return (
-                      <span className="font-mono" style={{ padding: "6px 12px", borderRadius: "100px", background: "rgba(16,185,129,0.1)", color: "var(--success)", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-                        <CheckCircle2 style={{ width: 14, height: 14 }} /> SOLVED BY YOU ✓
-                      </span>
-                    );
-                  }
-                  if (status.oppAC) {
-                    return <span className="font-mono" style={{ padding: "6px 12px", borderRadius: "100px", background: "rgba(255,255,255,0.1)", color: "#FFFFFF", fontWeight: 700 }}>SOLVED BY OPPONENT</span>;
-                  }
-                  return <span className="font-mono" style={{ color: "var(--warning)", fontWeight: 700 }}>UNSOLVED — Submit on Codeforces</span>;
-                })()}
-              </div>
-
-              <div style={{ padding: "16px 20px", display: "flex", gap: 12, alignItems: "flex-start", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "12px" }}>
-                <AlertCircle style={{ width: 18, height: 18, color: "var(--text-muted)", flexShrink: 0, marginTop: 2 }} />
-                <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.6 }}>
-                  {isSupervisor ? (
-                    <span>You are supervising this contest. Competitors submit solutions on Codeforces and results update automatically.</span>
-                  ) : (
-                    <span>Click <strong style={{ color: "#FFF" }}>Open on Codeforces</strong> above and submit your solution using handle <strong style={{ color: "#FFF" }}>{user?.handle || "your handle"}</strong>. Submissions are detected automatically.</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ padding: "24px 20px", display: "flex", flexDirection: "column", gap: 16, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "16px" }}>
-            <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: "0.8rem", color: "var(--text-muted)", letterSpacing: "0.15em", margin: 0, textTransform: "uppercase" }}>
-              <Trophy style={{ width: 16, height: 16, color: "var(--warning)" }} /> Scoreboard
-            </h3>
-
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {[{ player: player1, stats: standings?.host, label: "Player 1" }, { player: player2, stats: standings?.guest, label: "Player 2" }]
-                .sort((a, b) => {
-                  if (contest.pointingSystem === "POINTS") {
-                    const pointsA = a.stats?.points ?? 0;
-                    const pointsB = b.stats?.points ?? 0;
-                    if (pointsB !== pointsA) return pointsB - pointsA;
-                    return (a.stats?.penaltyMinutes ?? 0) - (b.stats?.penaltyMinutes ?? 0);
-                  }
-                  if (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") return (b.stats?.lockedWon ?? 0) - (a.stats?.lockedWon ?? 0);
-                  const acA = a.stats?.acceptedCount ?? 0;
-                  const acB = b.stats?.acceptedCount ?? 0;
-                  if (acB !== acA) return acB - acA;
-                  return (a.stats?.penaltyMinutes ?? 0) - (b.stats?.penaltyMinutes ?? 0);
-                })
-                .map(({ player, stats, label }, rank) => (
-                  <div key={player?.id || label} style={{
-                    padding: "20px",
-                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                    borderBottom: "1px solid rgba(255,255,255,0.05)",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                      <span style={{ fontSize: "1.5rem" }}>{rank === 0 ? "🥇" : "🥈"}</span>
-                      <img src={player?.avatar || DEFAULT_AVATAR} alt={player?.handle || label} style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover" }} />
-                      <div>
-                        <div style={{ fontWeight: 800, fontSize: "1.2rem", color: "#FFFFFF", letterSpacing: "-0.02em" }}>
-                          {player?.handle || label}
-                          {stats?.hasResigned && <span style={{ marginLeft: 8, padding: "2px 6px", borderRadius: "4px", background: "rgba(239,68,68,0.1)", color: "var(--danger)", fontSize: "0.6rem", fontWeight: 700, verticalAlign: "middle" }}>RESIGNED</span>}
-                        </div>
-                        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 4 }}>{label}</div>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right" }} className="font-mono">
-                      <div style={{ fontWeight: 800, color: "var(--success)", fontSize: "1.2rem" }}>
-                        {contest.pointingSystem === "POINTS" ? `${stats?.points ?? 0} Points` : (contest.mode === "LOCKOUT" || contest.mode === "BLITZ") ? `${stats?.lockedWon ?? 0} Locked` : `${stats?.acceptedCount ?? 0} Solved`}
-                      </div>
-                      {(contest.mode === "CLASSIC" || contest.pointingSystem === "POINTS") && (
-                        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>+{stats?.penaltyMinutes ?? 0}m penalty</div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </div>
-
-          <div style={{ padding: "24px 20px", display: "flex", flexDirection: "column", gap: 16, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "16px" }}>
-            <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: "0.8rem", color: "var(--text-muted)", letterSpacing: "0.15em", margin: 0, textTransform: "uppercase" }}>
-              <Activity style={{ width: 16, height: 16, color: "var(--accent)" }} /> Recent Actions
-            </h3>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: 260, overflowY: "auto" }}>
-              {recentActions.length === 0 ? (
-                <p className="font-mono" style={{ fontSize: "0.85rem", color: "var(--text-muted)", textAlign: "center", padding: "20px 0", margin: 0 }}>
-                  No submissions recorded yet.
-                </p>
-              ) : (
-                recentActions.map((item: any, idx: number) => {
-                  if (item.type === "SUBMISSION") {
-                    const sub = item.action;
-                    return (
-                      <div key={`${sub.id ?? sub.cfSubmissionId}-${idx}`} style={{ padding: "12px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                        <div>
-                          <span style={{ fontWeight: 800, fontSize: "0.9rem", color: "#FFFFFF" }}>{sub.user?.handle || "User"}</span>
-                          <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginTop: 2 }}>{sub.problem?.name || "Problem"}</span>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          {sub.timeSubmitted && (
-                            <span className="font-mono" style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
-                              {formatActionTime(sub.timeSubmitted)}
-                            </span>
-                          )}
-                          <span className="font-mono" style={{
-                            background: sub.verdict === "OK" ? "rgba(16,185,129,0.1)" : sub.verdict === "TESTING" ? "rgba(245,158,11,0.1)" : "rgba(239,68,68,0.1)",
-                            color: sub.verdict === "OK" ? "var(--success)" : sub.verdict === "TESTING" ? "var(--warning)" : "var(--danger)",
-                            fontSize: "0.7rem", fontWeight: 700, padding: "4px 8px", borderRadius: "100px", border: sub.verdict === "OK" ? "1px solid rgba(16,185,129,0.2)" : sub.verdict === "TESTING" ? "1px solid rgba(245,158,11,0.2)" : "1px solid rgba(239,68,68,0.2)"
-                          }}>
-                            {sub.verdict === "OK" ? "AC" : sub.verdict === "TESTING" ? "TESTING..." : sub.verdict?.replace(/_/g, " ")}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  }
-                  if (item.type === "LEAVE") {
-                    return (
-                      <div key={idx} style={{ padding: "10px 12px", background: "rgba(245,158,11,0.05)", borderLeft: "2px solid var(--warning)", fontSize: "0.75rem", color: "var(--warning)", fontWeight: 600, margin: "6px 0" }}>
-                        {item.action?.text || "Player left room"}
-                      </div>
-                    );
-                  }
-                  return null;
-                })
+        <div className="flex items-center justify-between gap-3 lg:justify-end">
+          <div
+            className={cn(
+              "flex items-center gap-3 rounded-full border px-4 py-2.5",
+              lowTime
+                ? "border-danger/30 bg-danger/8"
+                : "border-white/8 bg-white/2",
+            )}
+          >
+            <Clock
+              className={cn(
+                "size-4 shrink-0",
+                lowTime ? "text-danger" : "text-ink-dim",
               )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {isFinished && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 100,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "var(--modal-backdrop)", backdropFilter: "blur(8px)", padding: 20,
-        }} className="animate-fade-in">
-          <div className="animate-scale-in" style={{ width: "100%", maxWidth: 520, padding: "40px", textAlign: "center", display: "flex", flexDirection: "column", gap: 24, background: "#09090B", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "24px", boxShadow: "0 20px 40px rgba(0,0,0,0.5)" }}>
-            <div style={{ width: 64, height: 64, background: "rgba(245,158,11,0.1)", margin: "0 auto", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Trophy style={{ width: 32, height: 32, color: "var(--warning)" }} />
-            </div>
+            />
             <div>
-              <h2 style={{ fontWeight: 800, fontSize: "2rem", color: "#FFFFFF", margin: "0 0 6px", letterSpacing: "-0.02em" }}>Contest Over</h2>
-              <p className="font-mono" style={{ fontSize: "1rem", color: "var(--accent)", margin: 0, fontWeight: 700 }}>
-                {winnerInfo?.isDraw ? "🤝 It's a Draw!" : `🏆 Winner: ${winnerInfo?.winnerHandle || "—"}`}
+              <p className="text-[0.6rem] font-bold tracking-[0.12em] text-ink-faint uppercase">
+                Remaining
+              </p>
+              <p
+                className={cn(
+                  "font-mono text-xl leading-none font-extrabold tabular-nums",
+                  lowTime ? "text-danger" : "text-ink",
+                )}
+              >
+                {formatCountdown(remainingSeconds)}
               </p>
             </div>
+          </div>
 
-            <div className="font-mono" style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 12, textAlign: "left", fontSize: "0.85rem", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "12px" }}>
-              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Final Standings</div>
-              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: 12 }}>
-                <span style={{ fontWeight: 800, color: "#FFFFFF" }}>{player1?.handle || "Player 1"} (Player 1)</span>
-                <span style={{ fontWeight: 800, color: "var(--success)" }}>
-                  {contest.mode === "BLITZ"
-                    ? `${winnerInfo?.standings?.host?.lockedWon ?? standings?.host?.lockedWon ?? 0} Problems Locked`
-                    : `${winnerInfo?.standings?.host?.acceptedCount ?? standings?.host?.acceptedCount ?? 0} Solved | +${winnerInfo?.standings?.host?.penaltyMinutes ?? standings?.host?.penaltyMinutes ?? 0}m`}
-                </span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontWeight: 800, color: "#FFFFFF" }}>{player2?.handle || "Player 2"} (Player 2)</span>
-                <span style={{ fontWeight: 800, color: "var(--success)" }}>
-                  {contest.mode === "BLITZ"
-                    ? `${winnerInfo?.standings?.guest?.lockedWon ?? standings?.guest?.lockedWon ?? 0} Problems Locked`
-                    : `${winnerInfo?.standings?.guest?.acceptedCount ?? standings?.guest?.acceptedCount ?? 0} Solved | +${winnerInfo?.standings?.guest?.penaltyMinutes ?? standings?.guest?.penaltyMinutes ?? 0}m`}
-                </span>
-              </div>
-            </div>
+          <Button
+            variant="danger"
+            onClick={() => setConfirmQuit(true)}
+            icon={<LogOut className="size-4" />}
+          >
+            <span className="hidden xs:inline">
+              {contest.isSolo ? "End practice" : "Resign"}
+            </span>
+          </Button>
+        </div>
+      </header>
 
-            <Link href="/" style={{ padding: "16px 28px", fontSize: "0.95rem", background: "#FFFFFF", color: "#000000", fontWeight: 800, borderRadius: "100px", textDecoration: "none", marginTop: 8 }}>
-              Return to Dashboard
-            </Link>
+      {isSupervisor && (
+        <Alert tone="warning">
+          <span className="flex items-center gap-2">
+            <Eye className="size-4 shrink-0" />
+            You&apos;re supervising {player1?.handle ?? "Player 1"} vs{" "}
+            {player2?.handle ?? "Player 2"}.
+          </span>
+        </Alert>
+      )}
+
+      {blitzCountdown !== null && (
+        <Alert tone="warning" shake>
+          Next problem unlocks in {blitzCountdown}s…
+        </Alert>
+      )}
+
+      {/* ── Mobile tabs ───────────────────────────────────────────────────── */}
+      <div className="panel grid grid-cols-3 gap-1 rounded-full p-1 lg:hidden">
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={cn(
+              "flex cursor-pointer items-center justify-center gap-1.5 rounded-full border-0 py-2.5 text-[0.78rem] font-bold transition-colors",
+              tab === id
+                ? "bg-ink text-ink-invert"
+                : "bg-transparent text-ink-dim",
+            )}
+          >
+            <Icon className="size-3.5" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Content ───────────────────────────────────────────────────────── */}
+      {/* Desktop: two columns. Mobile: whichever tab is selected. */}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <div className={cn(tab === "problem" ? "block" : "hidden", "lg:block")}>
+          {problemArea}
+        </div>
+
+        <div className="flex flex-col gap-5">
+          <div className={cn(tab === "board" ? "block" : "hidden", "lg:block")}>
+            {scoreboard}
+          </div>
+          <div className={cn(tab === "feed" ? "block" : "hidden", "lg:block")}>
+            {feed}
           </div>
         </div>
-      )}
+      </div>
+
+      <div className="flex justify-center pt-2">
+        <Link
+          href="/"
+          className={buttonStyles({ variant: "ghost", size: "sm" })}
+        >
+          Leave the arena (keeps your place)
+        </Link>
+      </div>
+
+      <ConfirmDialog
+        open={confirmQuit}
+        title={contest.isSolo ? "End this practice run?" : "Resign the duel?"}
+        message={
+          contest.isSolo
+            ? "The run will be closed. Your progress is kept but nothing is rated."
+            : "Your opponent is awarded the win, and the loss is recorded against your Elo. You can still watch until the timer ends."
+        }
+        confirmLabel={contest.isSolo ? "End run" : "Resign"}
+        loading={quitting}
+        onConfirm={quitContest}
+        onCancel={() => setConfirmQuit(false)}
+      />
     </div>
   );
 }

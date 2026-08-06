@@ -1,351 +1,573 @@
 "use client";
 
-import React, { useState, Suspense } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Swords, Zap, Shield, Sparkles, Hash, Clock, Tag, ArrowRight, AlertTriangle, Sliders, Eye, UserCheck } from "lucide-react";
+import { Dices, Globe, Sparkles, Swords } from "lucide-react";
 import { useUser } from "@/context/UserContext";
+import { apiFetch, errorMessage } from "@/lib/api-client";
+import { cn } from "@/lib/cn";
+import {
+  Alert,
+  Button,
+  Card,
+  Chip,
+  Field,
+  Input,
+  LoadingScreen,
+  PageHeader,
+  SegmentedControl,
+  Switch,
+  type SegmentOption,
+} from "@/components/ui";
 
 const POPULAR_TAGS = [
-  "implementation","math","greedy","dp","data structures","brute force",
-  "constructive algorithms","graphs","sortings","binary search","dfs and similar",
-  "trees","strings","number theory","two pointers","bitmasks","combinatorics","geometry",
+  "implementation", "math", "greedy", "dp", "data structures", "brute force",
+  "constructive algorithms", "graphs", "sortings", "binary search",
+  "dfs and similar", "trees", "strings", "number theory", "two pointers",
+  "bitmasks", "combinatorics", "geometry",
 ];
 
-function CreateContestPageInner() {
-  const { user } = useUser();
+const DURATION_PRESETS = [15, 30, 45, 60, 90, 120];
+const MIN_DURATION = 5;
+const MAX_DURATION = 300;
+const MAX_PROBLEMS = 8;
+
+type Format = "PLAYER" | "SUPERVISED" | "SOLO";
+type Mode = "LOCKOUT" | "BLITZ" | "CLASSIC";
+type Scoring = "ICPC" | "POINTS";
+type RatingMode = "RANGE" | "EXACT";
+type TagMode = "ANY" | "ALL";
+
+const FORMAT_OPTIONS: SegmentOption<Format>[] = [
+  {
+    value: "PLAYER",
+    label: "Play",
+    hint: "You compete directly against whoever joins your room.",
+  },
+  {
+    value: "SUPERVISED",
+    label: "Supervise",
+    hint: "You host and watch; the first two people to join are the contestants.",
+  },
+  {
+    value: "SOLO",
+    label: "Practice",
+    hint: "A solo timed run. No opponent, no rating change, no match history.",
+  },
+];
+
+const MODE_OPTIONS: SegmentOption<Mode>[] = [
+  { value: "LOCKOUT", label: "Lockout", hint: "Every problem is open. First accepted solution claims it." },
+  { value: "BLITZ", label: "Blitz", hint: "Linear race — solving the current problem unlocks the next." },
+  { value: "CLASSIC", label: "Classic", hint: "ICPC scoring: most solved wins, penalty time breaks ties." },
+];
+
+const SCORING_OPTIONS: SegmentOption<Scoring>[] = [
+  { value: "ICPC", label: "ICPC", hint: "Count of solves, with +20 minutes penalty per wrong submission." },
+  { value: "POINTS", label: "Points", hint: "Problems are worth 100, 200, 300… by position." },
+];
+
+const RATING_OPTIONS: SegmentOption<RatingMode>[] = [
+  { value: "RANGE", label: "Rating range" },
+  { value: "EXACT", label: "Per problem" },
+];
+
+const BEST_OF_OPTIONS: SegmentOption<string>[] = [
+  { value: "1", label: "Single", hint: "One game decides it." },
+  { value: "3", label: "Best of 3", hint: "First to 2 wins takes the series." },
+  { value: "5", label: "Best of 5", hint: "First to 3 wins takes the series." },
+];
+
+function CreateDuelForm() {
+  const { user, loading: sessionLoading } = useUser();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialMode = searchParams.get("mode") === "CLASSIC" ? "CLASSIC" : "BLITZ";
 
-  const [name, setName] = useState("Algorium Match");
-  const [hostingType, setHostingType] = useState<"PLAYER_HOST" | "SUPERVISED">("PLAYER_HOST");
-  const [mode, setMode] = useState<"LOCKOUT" | "BLITZ" | "CLASSIC">(initialMode);
-  const [pointingSystem, setPointingSystem] = useState<"ICPC" | "POINTS">("ICPC");
+  const initialMode = ((): Mode => {
+    const m = searchParams.get("mode");
+    return m === "CLASSIC" || m === "BLITZ" || m === "LOCKOUT" ? m : "LOCKOUT";
+  })();
+
+  const [name, setName] = useState("Algorium Duel");
+  const [format, setFormat] = useState<Format>(
+    searchParams.get("solo") ? "SOLO" : "PLAYER",
+  );
+  const [mode, setMode] = useState<Mode>(initialMode);
+  const [scoring, setScoring] = useState<Scoring>("ICPC");
   const [problemCount, setProblemCount] = useState(3);
-  const [durationMinutes, setDurationMinutes] = useState(30);
-  const [ratingMode, setRatingMode] = useState<"RANGE" | "EXACT">("RANGE");
+  const [duration, setDuration] = useState(30);
+  const [bestOf, setBestOf] = useState("1");
+  const [ratingMode, setRatingMode] = useState<RatingMode>("RANGE");
   const [minRating, setMinRating] = useState(800);
   const [maxRating, setMaxRating] = useState(1600);
   const [exactRatings, setExactRatings] = useState<number[]>([800, 1000, 1200]);
-  const [selectedAllowedTags, setSelectedAllowedTags] = useState<string[]>(["implementation","math"]);
-  const [selectedExcludedTags, setSelectedExcludedTags] = useState<string[]>([]);
+  const [allowedTags, setAllowedTags] = useState<string[]>([]);
+  const [excludedTags, setExcludedTags] = useState<string[]>([]);
+  const [tagMode, setTagMode] = useState<TagMode>("ANY");
+  const [isPublic, setIsPublic] = useState(false);
   const [seed, setSeed] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const toggleAllowedTag = (tag: string) =>
-    setSelectedAllowedTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+  // A practice run or a supervised room can't be part of a series.
+  useEffect(() => {
+    if (format !== "PLAYER" && bestOf !== "1") setBestOf("1");
+    if (format === "SOLO" && isPublic) setIsPublic(false);
+  }, [format, bestOf, isPublic]);
 
-  const toggleExcludedTag = (tag: string) =>
-    setSelectedExcludedTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
-
-  const handleProblemCountChange = (count: number) => {
+  // Keep the per-problem rating list the same length as the problem count.
+  const setCount = (count: number) => {
     setProblemCount(count);
-    setExactRatings(prev => {
-      const next = [...prev];
-      if (count > next.length) {
-        const lastVal = next.length > 0 ? next[next.length - 1] : 1200;
-        while (next.length < count) {
-          next.push(Math.min(3500, lastVal + 100)); // pad with increasing rating
-        }
-      } else {
-        next.length = count;
+    setExactRatings((prev) => {
+      const next = prev.slice(0, count);
+      let last = next.at(-1) ?? 1200;
+      while (next.length < count) {
+        last = Math.min(3500, last + 200);
+        next.push(last);
       }
       return next;
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) { setError("Please sign in with your Codeforces handle before creating a contest."); return; }
-    if (minRating > maxRating) { setError("Minimum rating cannot exceed maximum rating."); return; }
-    setLoading(true); setError(null);
-    try {
-      const res = await fetch("/api/contests/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          hostId: user.id,
-          hostHandle: user.handle,
-          name,
-          mode,
-          pointingSystem,
-          hostingType,
-          problemCount,
-          durationMinutes,
-          minRating,
-          maxRating,
-          ratings: ratingMode === "EXACT" ? exactRatings : undefined,
-          allowedTags: selectedAllowedTags,
-          excludedTags: selectedExcludedTags,
-          seed,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to create contest");
-      router.push(`/room/${data.room.code}`);
-    } catch (err: any) { setError(err.message); }
-    finally { setLoading(false); }
+  const toggleTag = (tag: string) => {
+    const isAllowed = allowedTags.includes(tag);
+    const isExcluded = excludedTags.includes(tag);
+
+    if (isAllowed) {
+      // allowed → excluded
+      setAllowedTags((t) => t.filter((x) => x !== tag));
+      setExcludedTags((t) => [...t, tag]);
+    } else if (isExcluded) {
+      // excluded → off
+      setExcludedTags((t) => t.filter((x) => x !== tag));
+    } else {
+      // off → allowed
+      setAllowedTags((t) => [...t, tag]);
+    }
   };
 
-  const S = {
-    card: { marginBottom: 48 } as React.CSSProperties,
-    label: { display: "block", marginBottom: 12, fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase" as any } as React.CSSProperties,
-    unselectedBtn: { display: "flex", flexDirection: "column" as any, gap: 6, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", padding: "16px 20px", color: "var(--text-secondary)", cursor: "pointer", transition: "all 0.2s", textAlign: "left" as any, flex: 1 } as React.CSSProperties,
-    selectedBtn: { display: "flex", flexDirection: "column" as any, gap: 6, background: "#FFFFFF", border: "1px solid #FFFFFF", borderRadius: "12px", padding: "16px 20px", color: "#000000", cursor: "pointer", transition: "all 0.2s", textAlign: "left" as any, flex: 1 } as React.CSSProperties,
-    bigInput: { background: "transparent", border: "none", borderBottom: "2px solid #222", color: "#FFFFFF", fontSize: "1.8rem", fontWeight: 700, padding: "4px 0", outline: "none", width: "100%", letterSpacing: "-0.02em", transition: "border-color 0.3s" } as React.CSSProperties,
-  };
+  const tagState = (tag: string) =>
+    allowedTags.includes(tag)
+      ? "include"
+      : excludedTags.includes(tag)
+        ? "exclude"
+        : "off";
+
+  const summary = useMemo(() => {
+    const parts = [
+      `${problemCount} problem${problemCount === 1 ? "" : "s"}`,
+      `${duration} min`,
+      ratingMode === "RANGE"
+        ? `${minRating}–${maxRating}`
+        : exactRatings.join(" / "),
+    ];
+    if (bestOf !== "1") parts.push(`best of ${bestOf}`);
+    return parts.join(" · ");
+  }, [problemCount, duration, ratingMode, minRating, maxRating, exactRatings, bestOf]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    if (!user) {
+      setError("Sign in with your Codeforces handle before hosting a duel.");
+      return;
+    }
+    if (ratingMode === "RANGE" && minRating > maxRating) {
+      setError("Minimum rating can't be higher than the maximum.");
+      return;
+    }
+    if (duration < MIN_DURATION || duration > MAX_DURATION) {
+      setError(`Duration must be between ${MIN_DURATION} and ${MAX_DURATION} minutes.`);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const data = await apiFetch<{ room: { code: string } }>(
+        "/api/contests/create",
+        {
+          method: "POST",
+          body: {
+            name: name.trim(),
+            mode,
+            pointingSystem: scoring,
+            hostingType: format === "SUPERVISED" ? "SUPERVISED" : "PLAYER_HOST",
+            isSolo: format === "SOLO",
+            isPublic,
+            problemCount,
+            durationMinutes: duration,
+            minRating,
+            maxRating,
+            ratings: ratingMode === "EXACT" ? exactRatings : undefined,
+            allowedTags,
+            excludedTags,
+            tagMatchMode: tagMode,
+            bestOf: Number(bestOf),
+            seed: seed.trim(),
+          },
+        },
+      );
+      router.push(`/room/${data.room.code}`);
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't create the duel."));
+      setSubmitting(false);
+    }
+  }
+
+  if (sessionLoading) {
+    return <LoadingScreen icon={<Swords className="size-6" />} message="Loading…" />;
+  }
 
   return (
-    <div style={{ position: "fixed", top: 64, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", overflow: "hidden", padding: "40px" }}>
-      <div style={{ maxWidth: 1200, width: "100%", margin: "0 auto", display: "flex", flexDirection: "column", height: "100%" }}>
-        
-        {/* Main Heading Always on Top */}
-        <div style={{ flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "40px" }}>
-          <div>
-            <h1 style={{ fontWeight: 800, fontSize: "3.5rem", color: "#FFFFFF", margin: "0", letterSpacing: "-0.05em", lineHeight: 1 }}>
-              Create Duel.
-            </h1>
-            {error && (
-              <div className="animate-shake" style={{ color: "var(--danger)", fontSize: "0.9rem", fontWeight: 600, marginTop: 16 }}>
-                {error}
-              </div>
-            )}
-          </div>
-          <button
-            type="submit" form="create-contest-form" disabled={loading}
-            style={{ 
-              background: "#FFFFFF", color: "#000000", padding: "16px 48px", borderRadius: "100px",
-              fontSize: "1.1rem", fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase",
-              border: "none", cursor: loading ? "not-allowed" : "pointer", transition: "opacity 0.2s", opacity: loading ? 0.7 : 1
-            }}
+    <form onSubmit={submit} className="flex flex-col gap-8">
+      <PageHeader
+        eyebrow="New room"
+        title="Create a duel"
+        description={summary}
+        actions={
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            loading={submitting}
+            loadingText="Generating…"
+            className="hidden sm:inline-flex"
           >
-            {loading ? "Generating..." : "Create"}
-          </button>
+            Create room
+          </Button>
+        }
+      />
+
+      {!user && (
+        <Alert tone="warning">
+          You need to sign in with your Codeforces handle before you can host.
+        </Alert>
+      )}
+      {error && (
+        <Alert tone="danger" shake>
+          {error}
+        </Alert>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-2 lg:gap-x-10">
+        {/* ── Left column ─────────────────────────────────────────────────── */}
+        <div className="flex flex-col gap-6">
+          <Card>
+            <Field label="Duel name" htmlFor="duel-name">
+              <Input
+                id="duel-name"
+                value={name}
+                maxLength={60}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+            </Field>
+          </Card>
+
+          <Card className="flex flex-col gap-5">
+            <Field label="Format">
+              <SegmentedControl
+                value={format}
+                onChange={setFormat}
+                options={FORMAT_OPTIONS}
+                ariaLabel="Room format"
+              />
+            </Field>
+
+            <Field label="Mode">
+              <SegmentedControl
+                value={mode}
+                onChange={setMode}
+                options={MODE_OPTIONS}
+                ariaLabel="Contest mode"
+              />
+            </Field>
+
+            <Field label="Scoring">
+              <SegmentedControl
+                value={scoring}
+                onChange={setScoring}
+                options={SCORING_OPTIONS}
+                ariaLabel="Scoring system"
+              />
+            </Field>
+
+            {format === "PLAYER" && (
+              <Field label="Series">
+                <SegmentedControl
+                  value={bestOf}
+                  onChange={setBestOf}
+                  options={BEST_OF_OPTIONS}
+                  ariaLabel="Series length"
+                />
+              </Field>
+            )}
+          </Card>
+
+          <Card className="flex flex-col gap-5">
+            <Switch
+              id="public-room"
+              checked={isPublic}
+              onChange={setIsPublic}
+              disabled={format === "SOLO"}
+              label={
+                <span className="flex items-center gap-2">
+                  <Globe className="size-3.5 text-ink-faint" />
+                  List in open duels
+                </span>
+              }
+              description={
+                format === "SOLO"
+                  ? "Practice runs are always private."
+                  : "Anyone can find and join this room from the home page. Leave off to share the code privately."
+              }
+            />
+          </Card>
         </div>
 
-        {/* Scrollable Form Area */}
-        <form onSubmit={handleSubmit} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", paddingRight: 20 }} id="create-contest-form">
-          
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 80px" }}>
-            
-            {/* Left Column Settings */}
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {/* Contest Name */}
-              <div style={S.card}>
-                <label style={S.label}>Duel Name</label>
-                <input
-                  type="text" value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  style={S.bigInput} required
-                  onFocus={(e) => e.target.style.borderColor = "#FFFFFF"}
-                  onBlur={(e) => e.target.style.borderColor = "#222"}
-                />
-              </div>
-
-              {/* HOSTING TYPE SELECTOR */}
-              <div style={S.card}>
-                <label style={S.label}>Role</label>
-                <div style={{ position: "relative", display: "flex", background: "#000000", border: "none", borderRadius: "100px", padding: 6, marginBottom: 12 }}>
-                  <div style={{
-                    position: "absolute", top: 6, bottom: 6, left: hostingType === "PLAYER_HOST" ? 6 : "calc(50% + 3px)",
-                    width: "calc(50% - 9px)", background: "#FFFFFF", borderRadius: "100px",
-                    transition: "left 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
-                  }} />
-                  
-                  <button type="button" onClick={() => setHostingType("PLAYER_HOST")} 
-                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
-                             fontSize: "1.1rem", fontWeight: 700, color: hostingType === "PLAYER_HOST" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
-                    Player
-                  </button>
-                  
-                  <button type="button" onClick={() => setHostingType("SUPERVISED")} 
-                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
-                             fontSize: "1.1rem", fontWeight: 700, color: hostingType === "SUPERVISED" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
-                    Supervisor
-                  </button>
-                </div>
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, height: 16 }}>
-                  {hostingType === "PLAYER_HOST" ? "Compete directly against an opponent." : "Watch two players compete in your duel."}
-                </p>
-              </div>
-
-              {/* Mode Selector */}
-              <div style={{ ...S.card, marginBottom: 0 }}>
-                <label style={S.label}>Mode</label>
-                <div style={{ position: "relative", display: "flex", background: "#000000", border: "none", borderRadius: "100px", padding: 6, marginBottom: 12 }}>
-                  <div style={{
-                    position: "absolute", top: 6, bottom: 6, 
-                    left: mode === "LOCKOUT" ? 6 : mode === "BLITZ" ? "calc(33.33% + 4px)" : "calc(66.66% + 2px)",
-                    width: "calc(33.33% - 8px)", background: "#FFFFFF", borderRadius: "100px",
-                    transition: "left 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
-                  }} />
-                  
-                  <button type="button" onClick={() => setMode("LOCKOUT")} 
-                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
-                             fontSize: "1rem", fontWeight: 700, color: mode === "LOCKOUT" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
-                    Lockout
-                  </button>
-                  
-                  <button type="button" onClick={() => setMode("BLITZ")} 
-                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
-                             fontSize: "1rem", fontWeight: 700, color: mode === "BLITZ" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s", whiteSpace: "nowrap" }}>
-                    Blitz
-                  </button>
-                  
-                  <button type="button" onClick={() => setMode("CLASSIC")} 
-                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
-                             fontSize: "1rem", fontWeight: 700, color: mode === "CLASSIC" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
-                    Classic
-                  </button>
-                </div>
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, height: 16 }}>
-                  {mode === "LOCKOUT" ? "Free-for-all lock on solve." : mode === "BLITZ" ? "Linear race. Solved problem unlocks the next." : "ICPC style with penalty time."}
-                </p>
-              </div>
-
-              {/* Pointing System Selector */}
-              <div style={{ ...S.card, marginBottom: 0, marginTop: 48 }}>
-                <label style={S.label}>Scoring System</label>
-                <div style={{ position: "relative", display: "flex", background: "#000000", border: "none", borderRadius: "100px", padding: 6, marginBottom: 12 }}>
-                  <div style={{
-                    position: "absolute", top: 6, bottom: 6, left: pointingSystem === "ICPC" ? 6 : "calc(50% + 3px)",
-                    width: "calc(50% - 9px)", background: "#FFFFFF", borderRadius: "100px",
-                    transition: "left 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
-                  }} />
-                  
-                  <button type="button" onClick={() => setPointingSystem("ICPC")} 
-                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
-                             fontSize: "1.1rem", fontWeight: 700, color: pointingSystem === "ICPC" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
-                    ICPC
-                  </button>
-                  
-                  <button type="button" onClick={() => setPointingSystem("POINTS")} 
-                    style={{ position: "relative", zIndex: 1, flex: 1, background: "none", border: "none", padding: "12px", 
-                             fontSize: "1.1rem", fontWeight: 700, color: pointingSystem === "POINTS" ? "#000" : "var(--text-secondary)", cursor: "pointer", transition: "color 0.3s" }}>
-                    Points
-                  </button>
-                </div>
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, height: 16 }}>
-                  {pointingSystem === "ICPC" ? "Default scoring. Solves and penalty." : "Problems give 100, 200, 300... points."}
-                </p>
-              </div>
-            </div>
-
-            {/* Right Column Settings */}
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {/* Problem Count & Duration */}
-              <div style={S.card}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40 }}>
-                  <div>
-                    <label style={S.label}>Problems</label>
-                    <select value={problemCount} onChange={(e) => handleProblemCountChange(Number(e.target.value))}
-                      style={{ ...S.bigInput, appearance: "none", cursor: "pointer" }}>
-                      {[1,2,3,4,5].map(n => <option key={n} value={n} style={{ background: "#000", fontSize: "1rem" }}>{n}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={S.label}>Duration</label>
-                    <select value={durationMinutes} onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                      style={{ ...S.bigInput, appearance: "none", cursor: "pointer" }}>
-                      <option value={15} style={{ background: "#000", fontSize: "1rem" }}>15m</option>
-                      <option value={30} style={{ background: "#000", fontSize: "1rem" }}>30m</option>
-                      <option value={45} style={{ background: "#000", fontSize: "1rem" }}>45m</option>
-                      <option value={60} style={{ background: "#000", fontSize: "1rem" }}>60m</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Rating Configuration */}
-              <div style={S.card}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-                  <label style={{ ...S.label, marginBottom: 0 }}>Rating</label>
-                  <div style={{ display: "flex", gap: 16 }}>
-                    <button type="button" onClick={() => setRatingMode("RANGE")} style={{ background: "none", border: "none", padding: 0, fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: ratingMode === "RANGE" ? "#FFFFFF" : "#444", cursor: "pointer" }}>Range</button>
-                    <button type="button" onClick={() => setRatingMode("EXACT")} style={{ background: "none", border: "none", padding: 0, fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: ratingMode === "EXACT" ? "#FFFFFF" : "#444", cursor: "pointer" }}>Exact</button>
-                  </div>
-                </div>
-                
-                {ratingMode === "RANGE" ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-                    <input type="number" step={100} min={800} max={3500} value={minRating} onChange={(e) => setMinRating(Number(e.target.value))}
-                      style={{ ...S.bigInput, width: "100px", textAlign: "center" }} onFocus={(e) => e.target.style.borderColor = "#FFFFFF"} onBlur={(e) => e.target.style.borderColor = "#222"} />
-                    <span style={{ fontSize: "1.8rem", color: "#444", fontWeight: 700 }}>—</span>
-                    <input type="number" step={100} min={800} max={3500} value={maxRating} onChange={(e) => setMaxRating(Number(e.target.value))}
-                      style={{ ...S.bigInput, width: "100px", textAlign: "center" }} onFocus={(e) => e.target.style.borderColor = "#FFFFFF"} onBlur={(e) => e.target.style.borderColor = "#222"} />
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                    {exactRatings.map((rating, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: 20 }}>
-                        <span style={{ fontSize: "1rem", color: "#444", fontWeight: 700 }}>P{idx + 1}</span>
-                        <input type="range" min={800} max={3500} step={100} value={rating}
-                          onChange={(e) => {
-                            const newRatings = [...exactRatings];
-                            newRatings[idx] = Number(e.target.value);
-                            setExactRatings(newRatings);
-                          }}
-                          style={{ flex: 1, accentColor: "#FFFFFF", height: 2, background: "#222", appearance: "none", cursor: "pointer" }}
-                        />
-                        <span style={{ fontSize: "1.4rem", color: "#FFFFFF", fontWeight: 700, width: 60, textAlign: "right" }}>{rating}</span>
-                      </div>
-                    ))}
-                  </div>
+        {/* ── Right column ────────────────────────────────────────────────── */}
+        <div className="flex flex-col gap-6">
+          <Card className="flex flex-col gap-6">
+            <Field label={`Problems — ${problemCount}`}>
+              <div className="flex flex-wrap gap-2">
+                {Array.from({ length: MAX_PROBLEMS }, (_, i) => i + 1).map(
+                  (n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setCount(n)}
+                      className={cn(
+                        "size-10 cursor-pointer rounded-full border font-mono text-sm font-bold transition-colors",
+                        problemCount === n
+                          ? "border-ink bg-ink text-ink-invert"
+                          : "border-white/15 bg-transparent text-ink-dim hover:border-white/35 hover:text-ink",
+                      )}
+                    >
+                      {n}
+                    </button>
+                  ),
                 )}
               </div>
+            </Field>
 
-              {/* Tags */}
-              <div style={{ ...S.card, marginBottom: 0 }}>
-                <label style={S.label}>Tags</label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                  {POPULAR_TAGS.map((tag) => {
-                    const isAllowed = selectedAllowedTags.includes(tag);
-                    const isExcluded = selectedExcludedTags.includes(tag);
-                    return (
-                      <button
-                        key={tag} type="button" 
-                        onClick={() => {
-                          if (isAllowed) { toggleAllowedTag(tag); toggleExcludedTag(tag); }
-                          else if (isExcluded) { toggleExcludedTag(tag); }
-                          else { toggleAllowedTag(tag); }
-                        }}
-                        style={{ 
-                          background: isAllowed ? "#FFFFFF" : isExcluded ? "var(--danger)" : "transparent",
-                          border: `1px solid ${isAllowed ? "#FFFFFF" : isExcluded ? "var(--danger)" : "rgba(255,255,255,0.15)"}`,
-                          color: isAllowed ? "#000" : isExcluded ? "#FFF" : "var(--text-secondary)",
-                          padding: "6px 14px", borderRadius: "100px", fontSize: "0.85rem", fontWeight: 500, cursor: "pointer", transition: "all 0.2s"
-                        }}
-                      >
-                        {tag}
-                      </button>
-                    )
-                  })}
-                </div>
-                <p style={{ fontSize: "0.65rem", color: "#555", marginTop: 12, textTransform: "uppercase", letterSpacing: "0.1em" }}>Click once to allow, twice to exclude</p>
+            <Field
+              label={`Duration — ${duration} min`}
+              hint={`Anything from ${MIN_DURATION} to ${MAX_DURATION} minutes.`}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                {DURATION_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setDuration(preset)}
+                    className={cn(
+                      "h-10 cursor-pointer rounded-full border px-4 font-mono text-sm font-bold transition-colors",
+                      duration === preset
+                        ? "border-ink bg-ink text-ink-invert"
+                        : "border-white/15 bg-transparent text-ink-dim hover:border-white/35 hover:text-ink",
+                    )}
+                  >
+                    {preset}m
+                  </button>
+                ))}
+                <Input
+                  type="number"
+                  aria-label="Custom duration in minutes"
+                  min={MIN_DURATION}
+                  max={MAX_DURATION}
+                  value={duration}
+                  onChange={(e) => setDuration(Number(e.target.value))}
+                  className="h-10 w-24 text-center font-mono"
+                />
               </div>
-            </div>
+            </Field>
+          </Card>
 
-          </div>
+          <Card className="flex flex-col gap-5">
+            <Field label="Difficulty">
+              <SegmentedControl
+                value={ratingMode}
+                onChange={setRatingMode}
+                options={RATING_OPTIONS}
+                size="sm"
+                ariaLabel="Rating selection mode"
+              />
+            </Field>
 
-          <div style={{ paddingBottom: 40 }}></div>
+            {ratingMode === "RANGE" ? (
+              <div className="flex items-end gap-3">
+                <Field label="Min" htmlFor="min-rating" className="flex-1">
+                  <Input
+                    id="min-rating"
+                    type="number"
+                    step={100}
+                    min={800}
+                    max={3500}
+                    value={minRating}
+                    onChange={(e) => setMinRating(Number(e.target.value))}
+                    className="text-center font-mono"
+                  />
+                </Field>
+                <span className="pb-3 text-ink-faint">—</span>
+                <Field label="Max" htmlFor="max-rating" className="flex-1">
+                  <Input
+                    id="max-rating"
+                    type="number"
+                    step={100}
+                    min={800}
+                    max={3500}
+                    value={maxRating}
+                    onChange={(e) => setMaxRating(Number(e.target.value))}
+                    className="text-center font-mono"
+                  />
+                </Field>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {exactRatings.map((rating, idx) => (
+                  <div key={idx} className="flex items-center gap-3">
+                    <span className="w-6 shrink-0 font-mono text-xs font-bold text-ink-faint">
+                      {String.fromCharCode(65 + idx)}
+                    </span>
+                    <input
+                      type="range"
+                      min={800}
+                      max={3500}
+                      step={100}
+                      value={rating}
+                      aria-label={`Rating for problem ${String.fromCharCode(65 + idx)}`}
+                      onChange={(e) => {
+                        const next = [...exactRatings];
+                        next[idx] = Number(e.target.value);
+                        setExactRatings(next);
+                      }}
+                      className="min-w-0 flex-1"
+                    />
+                    <span className="w-12 shrink-0 text-right font-mono text-sm font-bold text-ink">
+                      {rating}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
 
-        </form>
+          <Card className="flex flex-col gap-4">
+            <Field
+              label="Tags"
+              hint="Tap once to require a tag, twice to exclude it, a third time to clear."
+            >
+              <div className="flex flex-wrap gap-2">
+                {POPULAR_TAGS.map((tag) => (
+                  <Chip
+                    key={tag}
+                    state={tagState(tag)}
+                    onClick={() => toggleTag(tag)}
+                  >
+                    {tag}
+                  </Chip>
+                ))}
+              </div>
+            </Field>
+
+            {allowedTags.length > 1 && (
+              <Field label="Tag matching">
+                <SegmentedControl
+                  value={tagMode}
+                  onChange={setTagMode}
+                  size="sm"
+                  options={[
+                    {
+                      value: "ANY" as TagMode,
+                      label: "Any tag",
+                      hint: "Problems need at least one of the selected tags.",
+                    },
+                    {
+                      value: "ALL" as TagMode,
+                      label: "All tags",
+                      hint: "Problems must carry every selected tag — much stricter.",
+                    },
+                  ]}
+                />
+              </Field>
+            )}
+          </Card>
+
+          <Card>
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="flex w-full cursor-pointer items-center justify-between border-0 bg-transparent p-0 text-left"
+            >
+              <span className="text-eyebrow text-ink-faint">Advanced</span>
+              <Sparkles className="size-4 text-ink-faint" />
+            </button>
+
+            {showAdvanced && (
+              <div className="mt-4">
+                <Field
+                  label="Seed"
+                  htmlFor="seed"
+                  hint="Same seed and settings reproduce the same problem set. Leave blank for random."
+                >
+                  <div className="flex gap-2">
+                    <Input
+                      id="seed"
+                      value={seed}
+                      maxLength={64}
+                      placeholder="random"
+                      onChange={(e) => setSeed(e.target.value)}
+                      className="font-mono"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() =>
+                        setSeed(Math.random().toString(36).slice(2, 10))
+                      }
+                      aria-label="Generate a random seed"
+                    >
+                      <Dices className="size-4" />
+                    </Button>
+                  </div>
+                </Field>
+              </div>
+            )}
+          </Card>
+        </div>
       </div>
-    </div>
+
+      {/* Sticky submit on phones, where the header button is hidden. */}
+      <div className="pb-safe sticky bottom-0 -mx-4 border-t border-white/8 bg-canvas/95 px-4 py-3 backdrop-blur-md sm:hidden">
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          fullWidth
+          loading={submitting}
+          loadingText="Generating…"
+        >
+          Create room
+        </Button>
+      </div>
+    </form>
   );
 }
 
 export default function CreateContestPage() {
   return (
-    <Suspense fallback={
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh" }}>
-        <div className="neu-card" style={{ padding: "32px 48px", textAlign: "center" }}>
-          <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>Loading contest form...</p>
-        </div>
-      </div>
-    }>
-      <CreateContestPageInner />
+    <Suspense
+      fallback={
+        <LoadingScreen
+          icon={<Swords className="size-6" />}
+          message="Loading the duel builder…"
+        />
+      }
+    >
+      <CreateDuelForm />
     </Suspense>
   );
 }

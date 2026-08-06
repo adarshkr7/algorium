@@ -1,383 +1,494 @@
 "use client";
 
-import React, { useEffect, useState, use } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Swords, Copy, Check, Zap, Shield, Users, Play, WifiOff, AlertTriangle, LogOut, Eye,
+  Check,
+  Copy,
+  Eye,
+  LogOut,
+  Play,
+  Share2,
+  Swords,
+  UserRound,
+  Users,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import { createClient } from "@/utils/supabase/client";
+import { apiFetch, errorMessage } from "@/lib/api-client";
+import { cn } from "@/lib/cn";
+import {
+  Alert,
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  ConfirmDialog,
+  DataPoint,
+  ErrorScreen,
+  LoadingScreen,
+  useToast,
+} from "@/components/ui";
 
-export default function RoomLobbyPage({ params }: { params: Promise<{ code: string }> }) {
+interface RoomPlayer {
+  id: string;
+  handle: string;
+  avatar: string;
+  rating: number;
+  elo: number;
+}
+
+interface RoomState {
+  id: string;
+  code: string;
+  status: string;
+  hostId: string;
+  hostingType: string;
+  isPublic: boolean;
+  gameNumber: number;
+  host: RoomPlayer;
+  guest: RoomPlayer | null;
+  player1: RoomPlayer | null;
+  player2: RoomPlayer | null;
+  series: {
+    id: string;
+    bestOf: number;
+    player1Id: string;
+    player2Id: string | null;
+    player1Wins: number;
+    player2Wins: number;
+  } | null;
+  contest: {
+    id: string;
+    name: string;
+    mode: string;
+    pointingSystem: string;
+    problemCount: number;
+    durationMinutes: number;
+    minRating: number;
+    maxRating: number;
+    isSolo: boolean;
+  } | null;
+}
+
+const POLL_MS = 5_000;
+
+export default function RoomLobbyPage({
+  params,
+}: {
+  params: Promise<{ code: string }>;
+}) {
   const { code: rawCode } = use(params);
   const code = rawCode.toUpperCase();
-  const { user } = useUser();
+
+  const { user, loading: sessionLoading } = useUser();
   const router = useRouter();
-  
-  // Need to ensure supabase client is created only once per render/mount
+  const toast = useToast();
   const [supabase] = useState(() => createClient());
 
-  const [room, setRoom] = useState<any>(null);
+  const [room, setRoom] = useState<RoomState | null>(null);
   const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState(false);
-  const [connectedPlayers, setConnectedPlayers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<"code" | "link" | null>(null);
   const [starting, setStarting] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [presentIds, setPresentIds] = useState<string[]>([]);
 
-  const channelRef = React.useRef<any>(null);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const joinAttempted = useRef(false);
+
+  // ── Load + auto-join ─────────────────────────────────────────────────────
+  const loadRoom = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ room: RoomState }>(`/api/rooms/${code}`, {
+        cache: "no-store",
+      });
+      let current = data.room;
+
+      if (current.status === "IN_PROGRESS" || current.status === "FINISHED") {
+        router.replace(`/arena/${code}`);
+        return;
+      }
+      if (current.status === "CANCELLED") {
+        setError("This room was cancelled by the host.");
+        setLoading(false);
+        return;
+      }
+
+      // Auto-join anyone who isn't already seated.
+      const seated =
+        !user ||
+        current.hostId === user.id ||
+        current.guest?.id === user.id ||
+        current.player1?.id === user.id ||
+        current.player2?.id === user.id;
+
+      if (user && !seated && !joinAttempted.current && !current.contest?.isSolo) {
+        joinAttempted.current = true;
+        try {
+          const joined = await apiFetch<{ room: RoomState }>(
+            `/api/rooms/${code}/join`,
+            { method: "POST", body: {} },
+          );
+          current = joined.room;
+        } catch (err) {
+          setError(errorMessage(err, "Couldn't join this room."));
+          setLoading(false);
+          return;
+        }
+      }
+
+      setRoom(current);
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't load this room."));
+    } finally {
+      setLoading(false);
+    }
+  }, [code, router, user]);
 
   useEffect(() => {
-    let isMounted = true;
-    let channel: any;
+    if (sessionLoading) return;
+    void loadRoom();
+    const id = setInterval(() => void loadRoom(), POLL_MS);
+    return () => clearInterval(id);
+  }, [loadRoom, sessionLoading]);
 
-    async function fetchRoomState() {
-      try {
-        const res = await fetch(`/api/rooms/${code}`, { cache: "no-store" });
-        const data = await res.json();
-        if (!res.ok || !data.room) {
-          if (isMounted) setError("Room not found");
-          return;
-        }
+  // ── Realtime: presence + lifecycle events ────────────────────────────────
+  useEffect(() => {
+    if (sessionLoading) return;
 
-        let currentRoom = data.room;
-
-        if (currentRoom.status === "IN_PROGRESS" || currentRoom.status === "FINISHED") {
-          router.push(`/arena/${code}`);
-          return;
-        }
-
-        if (currentRoom.status === "CANCELLED") {
-          if (isMounted) setError("Contest was cancelled");
-          setTimeout(() => router.push("/"), 2000);
-          return;
-        }
-
-        const isSupervised = currentRoom.hostingType === "SUPERVISED";
-        const isHostUser = user && user.id === currentRoom.hostId;
-
-        // Auto join logic if contestant
-        if (user && !isHostUser) {
-          const isPlayer1 = currentRoom.player1Id === user.id;
-          const isPlayer2 = currentRoom.player2Id === user.id;
-
-          if (!isPlayer1 && !isPlayer2) {
-            const joinRes = await fetch(`/api/rooms/${code}/join`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ guestId: user.id }),
-            });
-            const joinData = await joinRes.json();
-            if (joinRes.ok && joinData.room) {
-              currentRoom = joinData.room;
-              if (currentRoom.status === "IN_PROGRESS") {
-                router.push(`/arena/${code}`);
-                return;
-              }
-              if (channelRef.current) {
-                channelRef.current.send({
-                  type: "broadcast",
-                  event: "player-joined"
-                }).catch(() => {});
-              }
-            }
-          }
-        }
-
-        if (isMounted) {
-          setRoom(currentRoom);
-          setError(null);
-        }
-      } catch (err: any) {
-        if (isMounted) setError(err.message || "Failed to load room");
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    }
-
-    fetchRoomState();
-    
-    // Poll every 5 seconds to ensure we never miss a join if websockets drop
-    const pollInterval = setInterval(() => {
-      if (isMounted) fetchRoomState();
-    }, 5000);
-
-    const trackingId = user ? user.id : 'guest-' + Math.random().toString(36).substring(7);
-    
-    channel = supabase.channel(`room-${code}`, {
+    const channel = supabase.channel(`room-${code}`, {
       config: {
-        presence: { key: trackingId },
+        presence: { key: user?.id ?? `guest-${Math.random().toString(36).slice(2)}` },
       },
     });
-
     channelRef.current = channel;
 
     channel
       .on("presence", { event: "sync" }, () => {
-        const presenceState = channel.presenceState();
-        const players: any[] = [];
-        for (const id in presenceState) {
-          // @ts-ignore
-          players.push(...presenceState[id]);
-        }
-        if (isMounted) {
-          setConnectedPlayers(players);
-          // Refetch room state silently in case someone joined
-          fetchRoomState();
-        }
+        const state = channel.presenceState<{ userId?: string }>();
+        const ids = Object.values(state)
+          .flat()
+          .map((p) => p.userId)
+          .filter((id): id is string => Boolean(id));
+        setPresentIds(ids);
       })
       .on("broadcast", { event: "contest-started" }, () => {
-        router.push(`/arena/${code}`);
+        router.replace(`/arena/${code}`);
       })
       .on("broadcast", { event: "player-joined" }, () => {
-        if (isMounted) fetchRoomState();
+        void loadRoom();
       })
-      .on("broadcast", { event: "room-cancelled" }, (payload: any) => {
-        window.alert(`Contest ended by ${payload.payload.by}`);
-        router.push("/");
+      .on("broadcast", { event: "room-cancelled" }, (payload) => {
+        const by = (payload.payload as { by?: string })?.by ?? "The host";
+        toast.push(`${by} closed this room.`, "warning");
+        setTimeout(() => router.replace("/"), 1500);
       })
-      .subscribe(async (status: string) => {
+      .subscribe(async (status) => {
         if (status === "SUBSCRIBED" && user) {
-          await channel.track({
-            userId: user.id,
-            handle: user.handle,
-            avatar: user.avatar,
-          });
+          await channel.track({ userId: user.id, handle: user.handle });
         }
       });
 
     return () => {
-      isMounted = false;
-      clearInterval(pollInterval);
       channelRef.current = null;
-      if (channel) supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
-  }, [code, user, router, supabase]);
+  }, [code, supabase, user, router, loadRoom, sessionLoading, toast]);
 
-  const copyRoomCode = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  // ── Actions ──────────────────────────────────────────────────────────────
+  const copy = async (kind: "code" | "link") => {
+    const value =
+      kind === "code" ? code : `${window.location.origin}/room/${code}`;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      toast.push("Couldn't copy — you may need to do it manually.", "warning");
+    }
   };
 
-  const handleStartContest = async () => {
-    if (!user || !room || user.id !== room.hostId || starting) return;
+  const startContest = async () => {
+    if (!room || starting) return;
     setStarting(true);
     try {
-      const res = await fetch(`/api/rooms/${code}/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id }),
-      });
-
-      if (res.ok) {
-        // Broadcast the start event using the subscribed channelRef
-        if (channelRef.current) {
-          await channelRef.current.send({
-            type: "broadcast",
-            event: "contest-started",
-          });
-        }
-        router.push(`/arena/${code}`);
-      }
-    } catch (e) {
-      console.error("Error starting contest:", e);
-    } finally {
+      await apiFetch(`/api/rooms/${code}/start`, { method: "POST", body: {} });
+      router.replace(`/arena/${code}`);
+    } catch (err) {
+      toast.push(errorMessage(err, "Couldn't start the contest."), "danger");
       setStarting(false);
     }
   };
 
-  const handleLeaveRoom = async () => {
-    if (!user) { router.push("/"); return; }
-    const confirmed = window.confirm("Are you sure you want to quit? This will remove you from the room.");
-    if (!confirmed) return;
+  const leaveRoom = async () => {
+    setLeaving(true);
     try {
-      await fetch(`/api/rooms/${code}/leave`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id }),
-      });
-    } catch (e) { console.error("Error leaving room:", e); }
-    finally { router.push("/"); }
+      await apiFetch(`/api/rooms/${code}/leave`, { method: "POST", body: {} });
+    } catch {
+      /* leaving should never block navigation */
+    } finally {
+      router.replace("/");
+    }
   };
 
-  if (loading) return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60vh", gap: 16 }}>
-      <div className="neu-icon" style={{ width: 64, height: 64, background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
-        <Swords style={{ width: 28, height: 28, color: "var(--text-primary)" }} />
-      </div>
-      <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>Connecting to Room <span style={{ color: "#16A34A", fontWeight: 700 }}>{code}</span>...</p>
-    </div>
-  );
+  // ── Render ───────────────────────────────────────────────────────────────
+  if (sessionLoading || loading) {
+    return (
+      <LoadingScreen
+        icon={<Swords className="size-6" />}
+        message={`Connecting to room ${code}…`}
+      />
+    );
+  }
 
-  if (error || !room) return (
-    <div style={{ maxWidth: 440, margin: "80px auto", textAlign: "center" }}>
-      <div className="neu-card" style={{ padding: "40px 36px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-        <span className="neu-icon" style={{ width: 52, height: 52, background: "var(--danger-soft)", boxShadow: "var(--neu-shadow-sm)" }}>
-          <AlertTriangle style={{ width: 22, height: 22, color: "var(--danger)" }} />
-        </span>
-        <h2 style={{ fontWeight: 800, fontSize: "1.2rem", color: "var(--text-primary)", margin: 0 }}>{error || "Room Not Found"}</h2>
-        <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", margin: 0 }}>Please check the 6-character room code and try again.</p>
-        <button onClick={() => router.push("/")} className="neu-btn" style={{ marginTop: 8 }}>Return Home</button>
-      </div>
-    </div>
-  );
+  if (error || !room?.contest) {
+    return (
+      <ErrorScreen
+        title={error ?? "Room not found"}
+        message="Double-check the 6-character code, or head back and host your own duel."
+      />
+    );
+  }
 
-  const contest = room.contest;
+  const { contest } = room;
   const isSupervised = room.hostingType === "SUPERVISED";
-  const isHost = user && user.id === room.hostId;
+  const isSolo = contest.isSolo;
+  const isHost = user?.id === room.hostId;
 
   const player1 = isSupervised ? room.player1 : room.host;
   const player2 = isSupervised ? room.player2 : room.guest;
 
-  const isUserP1 = user && player1 && user.id === player1.id;
-  const isUserP2 = user && player2 && user.id === player2.id;
+  const canStart = isHost && (isSolo || Boolean(player1 && player2));
+  const series = room.series;
 
-  const player1Connected = Boolean(
-    player1 && (
-      connectedPlayers.some(p => p.userId === player1.id || (p.handle && p.handle.toLowerCase() === player1.handle.toLowerCase())) ||
-      true 
-    )
+  const startLabel = starting
+    ? "Starting…"
+    : canStart
+      ? isSolo
+        ? "Start practice"
+        : "Start contest"
+      : isSupervised
+        ? "Waiting for two players…"
+        : "Waiting for an opponent…";
+
+  return (
+    <div className="flex flex-col gap-7">
+      {/* ── Header ────────────────────────────────────────────────────────── */}
+      <header className="flex flex-col gap-5 border-b border-white/6 pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-eyebrow mb-2.5 text-ink-faint">
+            {isSolo
+              ? "Solo practice"
+              : isSupervised
+                ? "Supervised match"
+                : "1v1 duel"}{" "}
+            · {contest.name}
+          </p>
+          <h1 className="text-display leading-none text-ink">
+            Room
+            <br />
+            <span className="text-brand">{code}</span>
+          </h1>
+          {series && series.bestOf > 1 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Badge tone="warning">Best of {series.bestOf}</Badge>
+              <Badge tone="neutral">Game {room.gameNumber}</Badge>
+              <Badge tone="neutral">
+                Series {series.player1Wins}–{series.player2Wins}
+              </Badge>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => copy("code")}
+            icon={
+              copied === "code" ? (
+                <Check className="size-4" />
+              ) : (
+                <Copy className="size-4" />
+              )
+            }
+          >
+            {copied === "code" ? "Copied" : "Copy code"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => copy("link")}
+            icon={
+              copied === "link" ? (
+                <Check className="size-4" />
+              ) : (
+                <Share2 className="size-4" />
+              )
+            }
+          >
+            {copied === "link" ? "Copied" : "Share link"}
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => setConfirmLeave(true)}
+            icon={<LogOut className="size-4" />}
+          >
+            Leave
+          </Button>
+        </div>
+      </header>
+
+      {/* ── Configuration ─────────────────────────────────────────────────── */}
+      <Card padding="sm">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
+          <DataPoint label="Mode" value={contest.mode} />
+          <DataPoint label="Scoring" value={contest.pointingSystem} />
+          <DataPoint label="Problems" value={contest.problemCount} />
+          <DataPoint label="Duration" value={`${contest.durationMinutes} min`} />
+          <DataPoint
+            label="Rating"
+            value={`${contest.minRating}–${contest.maxRating}`}
+          />
+        </div>
+      </Card>
+
+      {room.isPublic && (
+        <Alert tone="info">
+          This room is listed in open duels — anyone can join it from the home
+          page.
+        </Alert>
+      )}
+
+      {/* ── Players ───────────────────────────────────────────────────────── */}
+      <section className="flex flex-col">
+        {isSupervised && (
+          <div className="mb-4 flex items-center gap-2.5 rounded-md border border-warning/25 bg-warning/8 px-4 py-3 text-[0.82rem] font-semibold text-warning">
+            <Eye className="size-4 shrink-0" />
+            <span>
+              {room.host.handle} is supervising this match.
+            </span>
+          </div>
+        )}
+
+        <PlayerSlot
+          player={player1}
+          role={isSupervised ? "Player 1" : "Host"}
+          online={player1 ? presentIds.includes(player1.id) : false}
+          isYou={player1?.id === user?.id}
+        />
+        {!isSolo && (
+          <PlayerSlot
+            player={player2}
+            role={isSupervised ? "Player 2" : "Challenger"}
+            online={player2 ? presentIds.includes(player2.id) : false}
+            isYou={player2?.id === user?.id}
+          />
+        )}
+      </section>
+
+      {/* ── Start ─────────────────────────────────────────────────────────── */}
+      <div className="pb-safe sticky bottom-0 -mx-4 border-t border-white/8 bg-canvas/95 px-4 py-3 backdrop-blur-md sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:backdrop-blur-none">
+        {isHost ? (
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            disabled={!canStart}
+            loading={starting}
+            loadingText="Starting…"
+            onClick={startContest}
+            icon={canStart ? <Play className="size-4" /> : undefined}
+          >
+            {startLabel}
+          </Button>
+        ) : (
+          <div className="panel flex items-center justify-center gap-2.5 rounded-full px-5 py-4 text-sm font-semibold text-ink-dim">
+            <span className="size-2 animate-pulse rounded-full bg-warning" />
+            Waiting for {room.host.handle} to start…
+          </div>
+        )}
+      </div>
+
+      <ConfirmDialog
+        open={confirmLeave}
+        title="Leave this room?"
+        message={
+          isHost
+            ? "The room will be cancelled for everyone in it."
+            : "You'll be removed from the room and the host will be notified."
+        }
+        confirmLabel="Leave room"
+        loading={leaving}
+        onConfirm={leaveRoom}
+        onCancel={() => setConfirmLeave(false)}
+      />
+    </div>
   );
+}
 
-  const player2Connected = Boolean(
-    player2 && (
-      connectedPlayers.some(p => p.userId === player2.id || (p.handle && p.handle.toLowerCase() === player2.handle.toLowerCase())) ||
-      true 
-    )
-  );
+/* ── Player row ───────────────────────────────────────────────────────────── */
 
-  const canStart = Boolean(isHost && player1 && player2 && player1Connected && player2Connected);
-
-  const PlayerCard = ({ player, roleTitle, connected, isWaiting = false }: { player: any; roleTitle: string; connected: boolean; isWaiting?: boolean }) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 24, padding: "24px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+function PlayerSlot({
+  player,
+  role,
+  online,
+  isYou,
+}: {
+  player: RoomPlayer | null;
+  role: string;
+  online: boolean;
+  isYou: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-4 border-b border-white/6 py-5 sm:gap-6 sm:py-6">
       {player ? (
         <>
-          <img src={player.avatar || "https://codeforces.org/s/0/images/user-alt.png"} alt={player.handle} style={{ width: 64, height: 64, borderRadius: "100px", objectFit: "cover" }} />
-          <div style={{ flex: 1 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-              <h3 style={{ fontWeight: 800, fontSize: "1.5rem", color: "#FFFFFF", margin: 0, lineHeight: 1 }}>{player.handle}</h3>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: connected ? "var(--success)" : "var(--danger)", boxShadow: `0 0 10px ${connected ? "var(--success)" : "var(--danger)"}` }} title={connected ? "Connected" : "Disconnected"} />
+          <Avatar src={player.avatar} alt={player.handle} size="lg" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <h3 className="truncate text-xl font-extrabold text-ink sm:text-2xl">
+                {player.handle}
+              </h3>
+              <span
+                title={online ? "Connected" : "Not in the room right now"}
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
+                  online
+                    ? "bg-success shadow-[0_0_10px_var(--color-success)]"
+                    : "bg-ink-faint",
+                )}
+              />
+              {isYou && <Badge tone="solid">You</Badge>}
             </div>
-            <div style={{ display: "flex", gap: 16, fontSize: "0.85rem", color: "var(--text-secondary)", fontWeight: 500, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-              <span>{roleTitle}</span>
-              <span>•</span>
-              <span>Rating: {player.rating}</span>
-            </div>
+            <p className="text-eyebrow mt-1.5 flex flex-wrap gap-x-3 text-ink-faint">
+              <span>{role}</span>
+              <span>·</span>
+              <span>{player.elo} Elo</span>
+              <span>·</span>
+              <span>CF {player.rating || "unrated"}</span>
+            </p>
           </div>
         </>
       ) : (
         <>
-          <div style={{ width: 64, height: 64, borderRadius: "100px", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Users style={{ width: 28, height: 28, color: "var(--text-muted)" }} />
+          <span className="flex size-14 shrink-0 items-center justify-center rounded-full bg-white/4 sm:size-16">
+            <Users className="size-6 text-ink-faint" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="text-xl font-extrabold text-ink-faint sm:text-2xl">
+              Waiting…
+            </h3>
+            <p className="text-eyebrow mt-1.5 flex flex-wrap gap-x-3 text-ink-faint">
+              <span>{role}</span>
+              <span>·</span>
+              <span className="text-warning">Slot open</span>
+            </p>
           </div>
-          <div style={{ flex: 1 }}>
-            <h3 style={{ fontWeight: 800, fontSize: "1.5rem", color: "var(--text-muted)", margin: "0 0 8px", lineHeight: 1 }}>Waiting...</h3>
-            <div style={{ display: "flex", gap: 16, fontSize: "0.85rem", color: "var(--text-secondary)", fontWeight: 500, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-              <span>{roleTitle}</span>
-              <span>•</span>
-              <span style={{ color: "var(--warning)" }}>Pending Join</span>
-            </div>
-          </div>
+          <UserRound className="size-5 shrink-0 animate-pulse text-ink-faint" />
         </>
       )}
-    </div>
-  );
-
-  return (
-    <div style={{ position: "fixed", top: 64, left: 0, right: 0, bottom: 0, display: "flex", flexDirection: "column", overflow: "hidden", padding: "40px 20px" }}>
-      <div style={{ maxWidth: 900, width: "100%", margin: "0 auto", display: "flex", flexDirection: "column", height: "100%" }}>
-        
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 40, flexShrink: 0, flexWrap: "wrap", gap: 20 }}>
-          <div>
-            <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 12 }}>
-              {isSupervised ? "Supervised Match" : "1v1 Duel"} • {contest?.name}
-            </div>
-            <h1 style={{ fontWeight: 800, fontSize: "3.5rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.05em", lineHeight: 0.9 }}>
-              Room<br/><span style={{ color: "#16A34A" }}>{code}</span>.
-            </h1>
-          </div>
-          
-          <div style={{ display: "flex", gap: 12 }}>
-            <button onClick={copyRoomCode} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "100px", padding: "12px 24px", color: "#FFF", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-              {copied ? <Check style={{ width: 16, height: 16 }} /> : <Copy style={{ width: 16, height: 16 }} />}
-              {copied ? "COPIED" : "COPY CODE"}
-            </button>
-            <button onClick={handleLeaveRoom} style={{ background: "transparent", border: "1px solid rgba(255,70,70,0.3)", borderRadius: "100px", padding: "12px 24px", color: "var(--danger)", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-              <LogOut style={{ width: 16, height: 16 }} /> QUIT CONTEST
-            </button>
-          </div>
-        </div>
-
-        {/* Configuration Bar */}
-        <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: "16px", padding: "20px 24px", marginBottom: 40, display: "flex", gap: 32, flexShrink: 0, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Mode</span>
-            <span style={{ fontSize: "1.1rem", color: "#FFF", fontWeight: 700 }}>{contest.mode}</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Problems</span>
-            <span style={{ fontSize: "1.1rem", color: "#FFF", fontWeight: 700 }}>{contest.problemCount}</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Duration</span>
-            <span style={{ fontSize: "1.1rem", color: "#FFF", fontWeight: 700 }}>{contest.durationMinutes} min</span>
-          </div>
-          {isSupervised && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Supervisor</span>
-              <span style={{ fontSize: "1.1rem", color: "#FFF", fontWeight: 700 }}>{room.host.handle}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Players Area */}
-        <div style={{ flex: 1, overflowY: "auto", paddingRight: 20 }}>
-          <PlayerCard
-            player={player1}
-            roleTitle={isSupervised ? "Player 1" : "Host"}
-            connected={player1Connected}
-            isWaiting={!player1}
-          />
-          <PlayerCard
-            player={player2}
-            roleTitle={isSupervised ? "Player 2" : "Guest"}
-            connected={player2Connected}
-            isWaiting={!player2}
-          />
-        </div>
-
-        {/* Action Button */}
-        <div style={{ marginTop: 24, paddingBottom: 24, flexShrink: 0 }}>
-          {isHost ? (
-            <button
-              onClick={handleStartContest}
-              disabled={!canStart || starting}
-              style={{ 
-                background: canStart ? "#FFFFFF" : "rgba(255,255,255,0.05)", 
-                color: canStart ? "#000000" : "rgba(255,255,255,0.3)", 
-                width: "100%", padding: "24px", 
-                fontSize: "1.2rem", fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase",
-                border: "none", cursor: (!canStart || starting) ? "not-allowed" : "pointer", 
-                transition: "all 0.2s"
-              }}
-            >
-              {starting
-                ? "STARTING CONTEST..."
-                : canStart
-                ? "START CONTEST NOW"
-                : (!player1 || !player2)
-                ? (isSupervised ? "WAITING FOR PLAYERS..." : "WAITING FOR GUEST...")
-                : "WAITING FOR CONNECTIONS..."}
-            </button>
-          ) : (
-            <div style={{ padding: "24px", textAlign: "center", background: "rgba(255,255,255,0.03)", color: "var(--text-secondary)", fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", fontSize: "0.9rem" }}>
-              WAITING FOR HOST TO START...
-            </div>
-          )}
-        </div>
-
-      </div>
     </div>
   );
 }

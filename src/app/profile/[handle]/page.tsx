@@ -1,181 +1,314 @@
 "use client";
 
-import React, { useEffect, useState, use } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  Trophy, Swords, CheckCircle2, XCircle, MinusCircle, ArrowLeft, ArrowRight, ExternalLink, KeyRound
+  ArrowRight,
+  ExternalLink,
+  Flame,
+  KeyRound,
+  Swords,
+  TrendingUp,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
+import { apiFetch, errorMessage } from "@/lib/api-client";
+import { cn } from "@/lib/cn";
+import { eloTier } from "@/lib/elo";
+import { formatDate, formatDuration, formatEloDelta } from "@/lib/format";
+import {
+  Avatar,
+  Badge,
+  buttonStyles,
+  Card,
+  EmptyState,
+  ErrorScreen,
+  LoadingScreen,
+  SectionTitle,
+  Stat,
+} from "@/components/ui";
 
-export default function ProfilePage({ params }: { params: Promise<{ handle: string }> }) {
+interface ProfileUser {
+  id: string;
+  handle: string;
+  avatar: string;
+  rating: number;
+  maxRating: number;
+  rank: string;
+  maxRank: string;
+  elo: number;
+  peakElo: number;
+  createdAt: string;
+}
+
+interface ProfileStats {
+  totalMatches: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  winRate: number;
+  elo: number;
+  peakElo: number;
+  eloTier: string;
+  isProvisional: boolean;
+  currentStreak: number;
+  bestStreak: number;
+  ladderRank: number | null;
+}
+
+interface MatchRow {
+  id: string;
+  roomCode: string;
+  opponentHandle: string;
+  mode: string;
+  result: "WIN" | "LOSS" | "DRAW";
+  userScore: number;
+  opponentScore: number;
+  duration: number;
+  playedAt: string;
+  eloChange: number;
+  eloAfter: number;
+}
+
+export default function ProfilePage({
+  params,
+}: {
+  params: Promise<{ handle: string }>;
+}) {
   const { handle: rawHandle } = use(params);
   const handle = decodeURIComponent(rawHandle);
   const { user: currentUser } = useUser();
 
-  const [profileData, setProfileData] = useState<any>(null);
+  const [data, setData] = useState<{
+    user: ProfileUser;
+    stats: ProfileStats;
+    matchHistory: MatchRow[];
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadProfile() {
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
       try {
-        setLoading(true);
-        const res = await fetch(`/api/profile/${encodeURIComponent(handle)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "User profile not found");
-        setProfileData(data);
-      } catch (err: any) { setError(err.message); }
-      finally { setLoading(false); }
-    }
-    loadProfile();
+        const result = await apiFetch<typeof data>(
+          `/api/profile/${encodeURIComponent(handle)}`,
+        );
+        if (!cancelled) {
+          setData(result);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setError(errorMessage(err, "Profile not found."));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [handle]);
 
-  if (loading) return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "60vh", gap: 16 }}>
-      <div className="neu-icon" style={{ width: 64, height: 64, background: "var(--bg-subtle)", border: "1px solid var(--border)" }}>
-        <Trophy style={{ width: 30, height: 30, color: "var(--text-primary)" }} />
-      </div>
-      <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>Loading profile for {handle}...</p>
-    </div>
-  );
+  if (loading) {
+    return (
+      <LoadingScreen
+        icon={<Swords className="size-6" />}
+        message={`Loading ${handle}…`}
+      />
+    );
+  }
 
-  if (error || !profileData) return (
-    <div style={{ maxWidth: 440, margin: "80px auto", textAlign: "center", display: "flex", flexDirection: "column", gap: 20, alignItems: "center" }}>
-      <div className="neu-card" style={{ padding: "36px 40px" }}>
-        <h2 style={{ fontWeight: 800, fontSize: "1.3rem", color: "var(--text-primary)", marginBottom: 20 }}>{error || "Profile Not Found"}</h2>
-        <Link href="/" className="neu-btn" style={{ display: "inline-flex" }}>
-          <ArrowLeft style={{ width: 15, height: 15 }} /> Back to Home
-        </Link>
-      </div>
-    </div>
-  );
+  if (error || !data) {
+    return (
+      <ErrorScreen
+        title={error ?? "Profile not found"}
+        message="That handle doesn't exist on Codeforces, or we couldn't reach the API."
+      />
+    );
+  }
 
-  const { user, stats, matchHistory } = profileData;
-
-  const statCards = [
-    { label: "Matches Played", value: stats.totalMatches, color: "var(--text-primary)" },
-    { label: "Victories", value: stats.wins, color: "var(--success)" },
-    { label: "Defeats", value: stats.losses, color: "var(--danger)" },
-    { label: "Win Rate", value: `${stats.winRate}%`, color: "var(--accent)" },
-  ];
+  const { user, stats, matchHistory } = data;
+  const tier = eloTier(stats.elo);
+  const isMe = currentUser?.handle === user.handle;
 
   return (
-    <div className="stagger-children" style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+    <div className="stagger flex flex-col gap-7">
+      {/* ── Banner ────────────────────────────────────────────────────────── */}
+      <Card padding="lg" className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:gap-7">
+          <Avatar src={user.avatar} alt={user.handle} size="xl" />
 
-      {/* Profile banner */}
-      <div style={{ padding: "40px", display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 28, flexWrap: "wrap", background: "rgba(255,255,255,0.02)", borderRadius: "24px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <img
-              src={user.avatar} alt={user.handle}
-              style={{ width: 100, height: 100, borderRadius: "50%", objectFit: "cover" }}
-            />
-            <span style={{
-              position: "absolute", bottom: -4, right: -4,
-              background: "#FFFFFF",
-              borderRadius: "50%", width: 28, height: 28,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              border: "3px solid #000"
-            }}>
-              <Swords style={{ width: 14, height: 14, color: "#000" }} />
-            </span>
-          </div>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
-              <h1 style={{ fontWeight: 800, fontSize: "2.4rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.02em" }}>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-display-sm truncate text-ink">
                 {user.handle}
               </h1>
-              <span style={{ padding: "4px 12px", background: "rgba(255,255,255,0.1)", color: "#FFFFFF", borderRadius: "100px", fontSize: "0.8rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-                {user.rank}
-              </span>
+              <Badge tone="neutral">{user.rank}</Badge>
             </div>
-            <div className="font-mono" style={{ fontSize: "0.9rem", color: "var(--text-muted)", display: "flex", gap: 24 }}>
-              <span>Rating <strong style={{ color: "var(--success)" }}>{user.rating}</strong></span>
-              <span>Max <strong style={{ color: "#FFFFFF" }}>{user.maxRating}</strong></span>
+
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[0.82rem] text-ink-faint">
+              <span className="flex items-center gap-1.5">
+                <TrendingUp className="size-3.5" />
+                <strong className={cn("font-bold", tier.className)}>
+                  {stats.elo} Elo
+                </strong>
+                <span>({tier.name})</span>
+              </span>
+              <span>
+                Peak <strong className="text-ink">{stats.peakElo}</strong>
+              </span>
+              <span>
+                CF <strong className="text-ink">{user.rating || "unrated"}</strong>
+              </span>
+              {stats.ladderRank && (
+                <span>
+                  Ladder <strong className="text-ink">#{stats.ladderRank}</strong>
+                </span>
+              )}
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {stats.isProvisional && stats.totalMatches > 0 && (
+                <Badge tone="info">
+                  Provisional — {10 - stats.totalMatches} duels to settle
+                </Badge>
+              )}
+              {stats.currentStreak >= 2 && (
+                <Badge tone="warning" icon={<Flame className="size-3" />}>
+                  {stats.currentStreak} win streak
+                </Badge>
+              )}
+              {stats.bestStreak >= 3 && (
+                <Badge tone="neutral">Best streak {stats.bestStreak}</Badge>
+              )}
             </div>
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <a href={`https://codeforces.com/profile/${user.handle}`} target="_blank" rel="noopener noreferrer" style={{ padding: "10px 20px", fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.05)", color: "#FFFFFF", borderRadius: "100px", textDecoration: "none" }}>
-            <ExternalLink style={{ width: 16, height: 16 }} />
-            <span>Codeforces</span>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <a
+            href={`https://codeforces.com/profile/${user.handle}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={buttonStyles({ variant: "outline", size: "sm" })}
+          >
+            <ExternalLink className="size-3.5" />
+            Codeforces
           </a>
-          {currentUser && currentUser.handle === user.handle && (
-            <Link href="/change-pass" style={{ padding: "10px 20px", fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 8, background: "#FFFFFF", color: "#000000", borderRadius: "100px", textDecoration: "none" }}>
-              <KeyRound style={{ width: 16, height: 16 }} />
-              <span>Change Password</span>
+          {isMe && (
+            <Link
+              href="/change-pass"
+              className={buttonStyles({ variant: "primary", size: "sm" })}
+            >
+              <KeyRound className="size-3.5" />
+              Change password
             </Link>
           )}
         </div>
+      </Card>
+
+      {/* ── Stats ─────────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat label="Duels" value={stats.totalMatches} />
+        <Stat label="Wins" value={stats.wins} tone="success" />
+        <Stat label="Losses" value={stats.losses} tone="danger" />
+        <Stat label="Win rate" value={`${stats.winRate}%`} tone="brand" />
       </div>
 
-      {/* Stats grid */}
-      <div className="stagger-children" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-        {statCards.map((sc) => (
-          <div key={sc.label} style={{ padding: "32px 24px", textAlign: "center", background: "rgba(255,255,255,0.02)", borderRadius: "20px" }}>
-            <div style={{ marginBottom: 12, fontSize: "0.75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em" }}>{sc.label}</div>
-            <div className="font-mono" style={{ fontSize: "2rem", fontWeight: 800, color: sc.color }}>{sc.value}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Match history */}
-      <div style={{ marginTop: "16px" }}>
-        <h3 style={{ display: "flex", alignItems: "center", gap: 12, fontWeight: 700, fontSize: "0.85rem", color: "var(--text-muted)", letterSpacing: "0.15em", marginBottom: 24, textTransform: "uppercase" }}>
-          <Swords style={{ width: 18, height: 18, color: "var(--accent)" }} /> Recent Match History
-        </h3>
+      {/* ── Match history ─────────────────────────────────────────────────── */}
+      <section className="flex flex-col gap-3">
+        <SectionTitle icon={<Swords className="size-4" />}>
+          Recent duels
+        </SectionTitle>
 
         {matchHistory.length === 0 ? (
-          <div style={{ padding: "40px", textAlign: "center", background: "rgba(255,255,255,0.02)", borderRadius: "20px" }}>
-            <p className="font-mono" style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
-              No match history recorded yet. Host or join a duel to get started!
-            </p>
-          </div>
+          <EmptyState
+            icon={<Swords className="size-5" />}
+            title="No duels yet"
+            message="Host or join a room to start building a record."
+            action={
+              <Link
+                href="/create"
+                className={buttonStyles({
+                  variant: "secondary",
+                  size: "sm",
+                  className: "mt-1",
+                })}
+              >
+                Host a duel
+              </Link>
+            }
+          />
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {matchHistory.map((match: any) => (
-              <div key={match.id} style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
-                padding: "20px 24px",
-                background: "rgba(255,255,255,0.02)", borderRadius: "16px"
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-                  <div style={{
-                    width: 70, textAlign: "center", padding: "6px 0", borderRadius: "8px",
-                    background: match.result === "WIN" ? "rgba(16,185,129,0.1)" : match.result === "LOSS" ? "rgba(239,68,68,0.1)" : "rgba(255,255,255,0.05)",
-                    color: match.result === "WIN" ? "var(--success)" : match.result === "LOSS" ? "var(--danger)" : "var(--text-muted)",
-                    fontSize: "0.75rem", fontWeight: 800, letterSpacing: "0.05em"
-                  }}>
-                    {match.result}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 800, color: "#FFFFFF", fontSize: "1.1rem" }}>{match.opponentHandle}</div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      {match.mode} • {new Date(match.playedAt).toLocaleDateString()}
-                    </div>
-                  </div>
+          <div className="flex flex-col gap-2">
+            {matchHistory.map((match) => (
+              <Card
+                key={match.id}
+                padding="sm"
+                className="flex flex-wrap items-center gap-x-4 gap-y-3"
+              >
+                <span
+                  className={cn(
+                    "w-16 shrink-0 rounded-md py-1.5 text-center text-[0.7rem] font-extrabold tracking-wide",
+                    match.result === "WIN" && "bg-success/12 text-success",
+                    match.result === "LOSS" && "bg-danger/12 text-danger",
+                    match.result === "DRAW" && "bg-white/6 text-ink-faint",
+                  )}
+                >
+                  {match.result}
+                </span>
+
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[0.95rem] font-bold text-ink">
+                    vs {match.opponentHandle}
+                  </p>
+                  <p className="text-eyebrow mt-1 flex flex-wrap gap-x-2 text-ink-faint">
+                    <span>{match.mode}</span>
+                    <span>·</span>
+                    <span>{formatDate(match.playedAt)}</span>
+                    <span>·</span>
+                    <span>{formatDuration(match.duration)}</span>
+                  </p>
                 </div>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
-                  <div className="font-mono" style={{ fontWeight: 800, color: "var(--text-primary)", fontSize: "1.2rem", textAlign: "right" }}>
-                    {match.userScore} <span style={{ color: "var(--text-muted)", margin: "0 8px" }}>—</span> {match.opponentScore}
-                  </div>
-                  {match.roomCode && (
-                    <Link
-                      href={`/arena/${match.roomCode}`}
-                      style={{ padding: "8px 16px", fontSize: "0.8rem", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.05)", color: "#FFFFFF", borderRadius: "100px", textDecoration: "none" }}
+                <div className="shrink-0 text-right font-mono">
+                  <p className="text-base font-extrabold text-ink">
+                    {match.userScore}
+                    <span className="mx-1.5 text-ink-faint">—</span>
+                    {match.opponentScore}
+                  </p>
+                  {match.eloChange !== 0 && (
+                    <p
+                      className={cn(
+                        "text-[0.7rem] font-bold",
+                        match.eloChange > 0 ? "text-success" : "text-danger",
+                      )}
                     >
-                      <span>Arena</span>
-                      <ArrowRight style={{ width: 14, height: 14 }} />
-                    </Link>
+                      {formatEloDelta(match.eloChange)} → {match.eloAfter}
+                    </p>
                   )}
                 </div>
-              </div>
+
+                {match.roomCode && (
+                  <Link
+                    href={`/arena/${match.roomCode}`}
+                    className={buttonStyles({
+                      variant: "ghost",
+                      size: "xs",
+                      className: "shrink-0",
+                    })}
+                  >
+                    Recap
+                    <ArrowRight className="size-3" />
+                  </Link>
+                )}
+              </Card>
             ))}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

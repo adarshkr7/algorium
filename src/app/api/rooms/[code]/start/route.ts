@@ -1,77 +1,114 @@
-import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, isErrorResponse, apiError, apiSuccess } from "@/lib/api-utils";
+import {
+  apiError,
+  apiSuccess,
+  handleUnexpected,
+  isErrorResponse,
+  requireAuth,
+} from "@/lib/api-utils";
+import { ROOM_INCLUDE } from "@/lib/services/room-service";
+import { BroadcastService } from "@/lib/services/broadcast";
 
+/**
+ * POST /api/rooms/[code]/start — host only.
+ *
+ * Also broadcasts `contest-started`, so a guest whose lobby tab is open is
+ * moved into the arena without waiting for the 5s poll.
+ */
 export async function POST(
   req: Request,
-  { params }: { params: Promise<{ code: string }> }
+  { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    const sessionOrError = await requireAuth(req);
-    if (isErrorResponse(sessionOrError)) return sessionOrError;
-    const session = sessionOrError;
+    const session = await requireAuth(req);
+    if (isErrorResponse(session)) return session;
 
-    const { code } = await params;
-    const { userId } = await req.json();
-
-    if (!code || !userId) {
-      return apiError("Code and userId are required", 400);
+    const { code: rawCode } = await params;
+    if (!rawCode || rawCode.length !== 6) {
+      return apiError("Invalid room code", 400, { code: "INVALID_CODE" });
     }
+    const code = rawCode.toUpperCase();
 
-    if (session.userId !== userId) {
-      return apiError("Unauthorized: userId does not match session", 403);
-    }
-
-    const uppercaseCode = code.toUpperCase();
     const room = await prisma.room.findUnique({
-      where: { code: uppercaseCode },
-      include: { contest: true },
+      where: { code },
+      include: { contest: { select: { id: true, durationMinutes: true, isSolo: true } } },
     });
 
     if (!room || !room.contest) {
-      return apiError("Room or contest not found", 404);
+      return apiError("Room not found", 404, { code: "ROOM_NOT_FOUND" });
+    }
+    if (room.hostId !== session.userId) {
+      return apiError("Only the host can start this contest", 403, {
+        code: "NOT_HOST",
+      });
+    }
+    if (room.status === "CANCELLED") {
+      return apiError("This room was cancelled", 410, { code: "ROOM_CANCELLED" });
     }
 
-    if (room.hostId !== userId) {
-      return apiError("Only the host can start the contest", 403);
-    }
-
-    if (!room.player2Id) {
-      return apiError("Cannot start contest until two players have joined", 400);
-    }
-
+    // Idempotent: a double-click just returns the running room.
     if (room.status === "IN_PROGRESS" || room.status === "FINISHED") {
-      return apiSuccess({ room });
+      const current = await prisma.room.findUnique({
+        where: { id: room.id },
+        include: ROOM_INCLUDE,
+      });
+      return apiSuccess({ room: current, alreadyStarted: true });
+    }
+
+    // Solo practice needs no opponent.
+    if (!room.contest.isSolo && !room.player2Id) {
+      return apiError(
+        room.hostingType === "SUPERVISED"
+          ? "Both players must join before you can start"
+          : "Waiting for an opponent to join",
+        409,
+        { code: "NOT_ENOUGH_PLAYERS" },
+      );
+    }
+
+    const problemCount = await prisma.problem.count({
+      where: { contestId: room.contest.id },
+    });
+    if (problemCount === 0) {
+      return apiError("This contest has no problems", 422, {
+        code: "NO_PROBLEMS",
+      });
     }
 
     const startTime = new Date();
-    const durationMs = room.contest.durationMinutes * 60 * 1000;
-    const endTime = new Date(startTime.getTime() + durationMs);
+    const endTime = new Date(
+      startTime.getTime() + room.contest.durationMinutes * 60 * 1000,
+    );
 
-    const updatedRoom = await prisma.room.update({
-      where: { id: room.id },
-      data: {
-        status: "IN_PROGRESS",
-        contest: {
-          update: {
-            status: "IN_PROGRESS",
-            startTime,
-            endTime,
-          },
-        },
-      },
-      include: {
-        host: true,
-        guest: true,
-        player1: true,
-        player2: true,
-        contest: true,
-      },
+    // Guard on WAITING so two hosts' tabs can't both start it.
+    const claimed = await prisma.room.updateMany({
+      where: { id: room.id, status: "WAITING" },
+      data: { status: "IN_PROGRESS" },
+    });
+    if (claimed.count === 0) {
+      const current = await prisma.room.findUnique({
+        where: { id: room.id },
+        include: ROOM_INCLUDE,
+      });
+      return apiSuccess({ room: current, alreadyStarted: true });
+    }
+
+    await prisma.contest.update({
+      where: { id: room.contest.id },
+      data: { status: "IN_PROGRESS", startTime, endTime },
     });
 
-    return apiSuccess({ room: updatedRoom });
-  } catch (error: any) {
-    console.error("Start contest API error:", error);
-    return apiError("Internal server error", 500);
+    const updatedRoom = await prisma.room.findUnique({
+      where: { id: room.id },
+      include: ROOM_INCLUDE,
+    });
+
+    await new BroadcastService(code).broadcastContestStarted(
+      startTime.toISOString(),
+    );
+
+    return apiSuccess({ room: updatedRoom, alreadyStarted: false });
+  } catch (error) {
+    return handleUnexpected("rooms/[code]/start", error);
   }
 }

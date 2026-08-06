@@ -1,6 +1,13 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 export interface UserSession {
   id: string;
@@ -10,55 +17,69 @@ export interface UserSession {
   maxRating: number;
   rank: string;
   maxRank: string;
+  elo: number;
+  peakElo: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  currentStreak: number;
 }
 
 interface UserContextType {
   user: UserSession | null;
+  /** True until the initial session check resolves. */
+  loading: boolean;
   setUser: (user: UserSession | null) => void;
-  logout: () => void;
+  /** Re-reads the session — call after a duel to pick up the new Elo. */
+  refresh: () => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
-export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUserState] = useState<UserSession | null>(null);
+export const UserProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
+  const [user, setUser] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchSession = async () => {
-      try {
-        const res = await fetch("/api/users/me");
-        if (res.ok) {
-          const data = await res.json();
-          setUserState(data.user);
-        }
-      } catch (e) {
-        console.error("Failed to fetch session", e);
-      } finally {
-        setLoading(false);
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch("/api/users/me", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { user: UserSession };
+        setUser(data.user);
+      } else {
+        setUser(null);
       }
-    };
-    fetchSession();
+    } catch {
+      // Offline or server down — keep whatever we had rather than signing out.
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const setUser = (u: UserSession | null) => {
-    setUserState(u);
-  };
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
-  const logout = async () => {
-    setUserState(null);
+  const logout = useCallback(async () => {
+    setUser(null);
     try {
       await fetch("/api/users/logout", { method: "POST" });
-    } catch (e) {
-      console.error("Failed to logout", e);
+    } catch {
+      /* the cookie is cleared server-side on the next request anyway */
     }
-  };
+  }, []);
 
-  return (
-    <UserContext.Provider value={{ user, setUser, logout }}>
-      {!loading && children}
-    </UserContext.Provider>
+  const value = useMemo(
+    () => ({ user, loading, setUser, refresh, logout }),
+    [user, loading, refresh, logout],
   );
+
+  // Children render immediately. The previous version withheld the entire app
+  // until /api/users/me resolved, which flashed a blank page on every load.
+  return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
 };
 
 export const useUser = () => {

@@ -2,124 +2,152 @@
 
 import React, { useState } from "react";
 import { Mail, MessageSquare, Send } from "lucide-react";
+import { apiFetch, errorMessage } from "@/lib/api-client";
+import { useUser } from "@/context/UserContext";
+import {
+  Alert,
+  Button,
+  Card,
+  Field,
+  Input,
+  PageHeader,
+  Textarea,
+} from "@/components/ui";
+
+const SUPPORT_EMAIL = "support.algorium@gmail.com";
 
 export default function ContactPage() {
+  const { user } = useUser();
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name || !email || !subject || !message) return;
-
-    setLoading(true);
+    setSending(true);
     setError(null);
-    setSuccess(false);
 
     try {
-      const res = await fetch("/api/contact", {
+      await apiFetch("/api/contact", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, subject, message }),
+        body: { name, email, subject, message },
       });
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to send message");
-      }
-
-      setSuccess(true);
+      setSent(true);
       setName("");
       setEmail("");
       setSubject("");
       setMessage("");
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't send your message."));
     } finally {
-      setLoading(false);
+      setSending(false);
     }
-  };
+  }
 
   return (
-    <div style={{ maxWidth: 800, margin: "0 auto", padding: "60px 20px" }}>
-      <div style={{ textAlign: "center", marginBottom: 48 }}>
-        <h1 style={{
-          fontSize: "clamp(2.4rem, 6vw, 3.5rem)",
-          fontWeight: 800,
-          lineHeight: 1.1,
-          color: "var(--text-primary)",
-          marginBottom: 16,
-          letterSpacing: "-0.04em",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 16
-        }}>
-          <MessageSquare style={{ width: 48, height: 48, color: "var(--accent)" }} />
-          Contact Us
-        </h1>
-        <p style={{
-          fontSize: "1.05rem",
-          color: "var(--text-secondary)",
-          maxWidth: 560,
-          margin: "0 auto",
-          lineHeight: 1.7,
-        }}>
-          Have a question, feedback, or found a bug? We'd love to hear from you.
-        </p>
-      </div>
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-7">
+      <PageHeader
+        icon={<MessageSquare className="size-5" />}
+        title="Get in touch"
+        description="Found a bug, hit an edge case, or have an idea for a mode? Tell us."
+      />
 
-      <div className="neu-card" style={{ padding: "40px" }}>
-        {success && (
-          <div style={{ padding: "16px", background: "var(--success)", color: "#fff", borderRadius: "var(--r-md)", marginBottom: "24px", textAlign: "center", fontWeight: 700 }}>
-            Message sent successfully! We will get back to you soon.
-          </div>
+      <Card padding="lg">
+        {sent && (
+          <Alert tone="success" className="mb-6">
+            Message sent. We&apos;ll reply to the address you gave us.
+          </Alert>
         )}
         {error && (
-          <div style={{ padding: "16px", background: "var(--danger-soft)", color: "var(--danger)", borderRadius: "var(--r-md)", marginBottom: "24px", textAlign: "center", fontWeight: 700 }}>
+          <Alert tone="danger" shake className="mb-6">
             {error}
-          </div>
+          </Alert>
         )}
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-          <div style={{ display: "flex", gap: "24px" }}>
-            <div style={{ flex: 1 }}>
-              <label className="neu-label" style={{ display: "block", marginBottom: "8px" }}>Name</label>
-              <input type="text" className="neu-input" placeholder="Your Name" value={name} onChange={(e) => setName(e.target.value)} required />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label className="neu-label" style={{ display: "block", marginBottom: "8px" }}>Email</label>
-              <input type="email" className="neu-input" placeholder="Your Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            </div>
-          </div>
-          <div>
-            <label className="neu-label" style={{ display: "block", marginBottom: "8px" }}>Subject</label>
-            <input type="text" className="neu-input" placeholder="What is this regarding?" value={subject} onChange={(e) => setSubject(e.target.value)} required />
-          </div>
-          <div>
-            <label className="neu-label" style={{ display: "block", marginBottom: "8px" }}>Message</label>
-            <textarea className="neu-input" placeholder="Your message here..." rows={6} style={{ resize: "vertical" }} value={message} onChange={(e) => setMessage(e.target.value)} required></textarea>
-          </div>
-          <button type="submit" disabled={loading} className="neu-btn-primary neu-btn" style={{ padding: "14px 28px", alignSelf: "flex-start" }}>
-            <Send style={{ width: 16, height: 16 }} />
-            <span>{loading ? "Sending..." : "Send Message"}</span>
-          </button>
-        </form>
-      </div>
 
-      <div style={{ display: "flex", justifyContent: "center", gap: "40px", marginTop: "60px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", color: "var(--text-secondary)" }}>
-          <div className="neu-icon" style={{ width: 40, height: 40 }}>
-            <Mail style={{ width: 18, height: 18, color: "var(--text-primary)" }} />
+        <form onSubmit={submit} className="flex flex-col gap-5">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Name" htmlFor="contact-name">
+              <Input
+                id="contact-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={user?.handle ?? "Your name"}
+                maxLength={80}
+                required
+              />
+            </Field>
+            <Field label="Email" htmlFor="contact-email">
+              <Input
+                id="contact-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                required
+              />
+            </Field>
           </div>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: "0.85rem", color: "var(--text-muted)" }}>Email Us</div>
-            <a href="mailto:support.algorium@gmail.com" style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 700 }}>support.algorium@gmail.com</a>
-          </div>
-        </div>
+
+          <Field label="Subject" htmlFor="contact-subject">
+            <Input
+              id="contact-subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="What's this about?"
+              maxLength={120}
+              required
+            />
+          </Field>
+
+          <Field
+            label="Message"
+            htmlFor="contact-message"
+            hint={`${message.length}/4000 characters`}
+          >
+            <Textarea
+              id="contact-message"
+              rows={7}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Include the room code if it's about a specific duel — it makes bugs much easier to trace."
+              minLength={10}
+              maxLength={4000}
+              required
+            />
+          </Field>
+
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            loading={sending}
+            loadingText="Sending…"
+            icon={<Send className="size-4" />}
+            className="self-stretch sm:self-start"
+          >
+            Send message
+          </Button>
+        </form>
+      </Card>
+
+      <div className="flex items-center justify-center gap-3 text-sm text-ink-dim">
+        <span className="flex size-9 items-center justify-center rounded-full bg-white/5">
+          <Mail className="size-4" />
+        </span>
+        <span>
+          Or email{" "}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}`}
+            className="font-semibold text-ink no-underline hover:underline"
+          >
+            {SUPPORT_EMAIL}
+          </a>
+        </span>
       </div>
     </div>
   );

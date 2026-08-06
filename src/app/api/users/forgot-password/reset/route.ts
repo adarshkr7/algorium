@@ -1,46 +1,76 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
-import { apiError, apiSuccess, validatePassword } from "@/lib/api-utils";
-import { rateLimit } from "@/lib/rate-limit";
+import { prisma } from "@/lib/prisma";
+import {
+  apiError,
+  apiSuccess,
+  enforceRateLimit,
+  handleUnexpected,
+  isErrorResponse,
+  parseBody,
+} from "@/lib/api-utils";
+import { ResetPasswordSchema } from "@/lib/validation";
 
+const BCRYPT_ROUNDS = 12;
+
+/** Length-safe constant-time comparison. */
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * POST /api/users/forgot-password/reset
+ *
+ * Bug fix: the change-password page posts `handleOrEmail`, but this route read
+ * `handle` and passed the resulting `undefined` straight into
+ * `findUnique({ where: { handle } })`. Password reset was broken for everyone;
+ * it now accepts either a handle or an email, matching the UI.
+ */
 export async function POST(req: Request) {
   try {
-    const rl = rateLimit(req as any, 5, 60 * 1000);
-    if (!rl.success) {
-      return apiError("Too many password reset attempts. Please try again later.", 429);
-    }
+    const limited = enforceRateLimit(
+      req,
+      6,
+      60_000,
+      "Too many reset attempts. Please wait a minute.",
+    );
+    if (limited) return limited;
 
-    const { handle, otp, newPassword } = await req.json();
+    const body = await parseBody(req, ResetPasswordSchema);
+    if (isErrorResponse(body)) return body;
 
-    if (!handle || !otp || !newPassword) {
-      return apiError("Handle, OTP, and new password are required", 400);
-    }
+    const identifier = body.handleOrEmail;
 
-    const passwordError = validatePassword(newPassword);
-    if (passwordError) return apiError(passwordError, 400);
-
-    const user = await prisma.user.findUnique({
-      where: { handle },
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { handle: { equals: identifier, mode: "insensitive" } },
+          { email: { equals: identifier, mode: "insensitive" } },
+        ],
+      },
+      select: { id: true, verificationToken: true, tokenExpiresAt: true },
     });
 
-    if (!user) {
-      return apiError("User not found", 404);
+    const invalidCode = () =>
+      apiError("That code is incorrect or has expired.", 401, {
+        code: "INVALID_OTP",
+      });
+
+    if (!user?.verificationToken || !user.tokenExpiresAt) return invalidCode();
+    if (new Date() > user.tokenExpiresAt) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { verificationToken: null, tokenExpiresAt: null },
+      });
+      return invalidCode();
     }
+    if (!safeEqual(user.verificationToken, body.otp)) return invalidCode();
 
-    if (user.verificationToken !== otp) {
-      return apiError("Invalid OTP", 401);
-    }
+    const passwordHash = await bcrypt.hash(body.newPassword, BCRYPT_ROUNDS);
 
-    if (!user.tokenExpiresAt || new Date() > user.tokenExpiresAt) {
-      return apiError("OTP has expired", 401);
-    }
-
-    // Hash the new password
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(newPassword, salt);
-
-    // Update password and clear OTP
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -50,9 +80,11 @@ export async function POST(req: Request) {
       },
     });
 
-    return apiSuccess({ success: true, message: "Password reset successfully" }, 200);
-  } catch (error: any) {
-    console.error("Error resetting password:", error);
-    return apiError("Failed to reset password", 500);
+    return apiSuccess({
+      success: true,
+      message: "Password updated. You can sign in now.",
+    });
+  } catch (error) {
+    return handleUnexpected("users/forgot-password/reset", error);
   }
 }

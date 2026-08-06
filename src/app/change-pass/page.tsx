@@ -1,163 +1,197 @@
 "use client";
 
 import React, { useState } from "react";
-import { KeyRound, Mail, ArrowRight, ShieldAlert, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
+import { ArrowRight, CheckCircle2, KeyRound, Mail } from "lucide-react";
+import { apiFetch, errorMessage } from "@/lib/api-client";
+import {
+  Alert,
+  Button,
+  buttonStyles,
+  Card,
+  Field,
+  Input,
+} from "@/components/ui";
+
+type Step = "request" | "reset" | "done";
 
 export default function ChangePasswordPage() {
-  const [step, setStep] = useState<"request" | "reset" | "success">("request");
+  const [step, setStep] = useState<Step>("request");
   const [handleOrEmail, setHandleOrEmail] = useState("");
+  const [sentTo, setSentTo] = useState<string | null>(null);
   const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleRequestOtp = async (e: React.FormEvent) => {
+  async function requestCode(e: React.FormEvent) {
     e.preventDefault();
-    if (!handleOrEmail) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/users/forgot-password/send-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ handleOrEmail }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to send OTP");
+      const data = await apiFetch<{ sentTo: string | null }>(
+        "/api/users/forgot-password/send-otp",
+        { method: "POST", body: { handleOrEmail } },
+      );
+      setSentTo(data.sentTo);
       setStep("reset");
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't send the code."));
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleResetPassword = async (e: React.FormEvent) => {
+  async function resetPassword(e: React.FormEvent) {
     e.preventDefault();
-    if (!otp || !newPassword) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/users/forgot-password/reset", {
+      // Note: this posts `handleOrEmail`, which the API now reads. It used to
+      // expect `handle`, so resets silently failed for everyone.
+      await apiFetch("/api/users/forgot-password/reset", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ handleOrEmail, otp, newPassword }),
+        body: { handleOrEmail, otp, newPassword },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to reset password");
-      setStep("success");
-    } catch (err: any) {
-      setError(err.message);
+      setStep("done");
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't reset your password."));
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <div style={{ maxWidth: 440, margin: "60px auto", padding: "20px" }}>
-      <div className="neu-card-lg animate-fade-in-up" style={{ padding: "36px 40px" }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div className="neu-icon" style={{ width: 64, height: 64, margin: "0 auto 20px" }}>
-            <KeyRound style={{ width: 32, height: 32, color: "var(--accent)" }} />
-          </div>
-          <h1 style={{ fontWeight: 800, fontSize: "1.5rem", color: "var(--text-primary)", marginBottom: 8 }}>
-            Change Password
+    <div className="mx-auto flex w-full max-w-md flex-col gap-6 py-6 sm:py-12">
+      <Card padding="lg" className="animate-fade-up">
+        <div className="mb-7 flex flex-col items-center text-center">
+          <span className="mb-4 flex size-14 items-center justify-center rounded-full bg-white/5">
+            <KeyRound className="size-6 text-ink" />
+          </span>
+          <h1 className="text-xl font-extrabold text-ink">
+            {step === "done" ? "Password updated" : "Reset your password"}
           </h1>
-          <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-            {step === "request" && "Enter your handle or email to receive an OTP."}
-            {step === "reset" && "Enter the OTP sent to your email and your new password."}
-            {step === "success" && "Your password has been changed successfully!"}
+          <p className="mt-2 text-sm leading-relaxed text-ink-dim">
+            {step === "request" &&
+              "Enter your handle or email and we'll send a one-time code."}
+            {step === "reset" &&
+              (sentTo
+                ? `Enter the 6-digit code we sent to ${sentTo}.`
+                : "Enter the 6-digit code we sent to your email.")}
+            {step === "done" && "You can sign in with your new password now."}
           </p>
         </div>
 
         {error && (
-          <div className="animate-shake" style={{
-            display: "flex", alignItems: "flex-start", gap: "10px",
-            padding: "12px 16px", borderRadius: "var(--r-md)",
-            background: "var(--danger-soft)", marginBottom: "24px",
-            boxShadow: "var(--neu-inset-sm)",
-          }}>
-            <ShieldAlert style={{ width: 15, height: 15, color: "var(--danger)", flexShrink: 0, marginTop: 1 }} />
-            <span style={{ fontSize: "0.78rem", color: "var(--danger)", fontWeight: 600 }}>{error}</span>
-          </div>
+          <Alert tone="danger" shake className="mb-5">
+            {error}
+          </Alert>
         )}
 
         {step === "request" && (
-          <form onSubmit={handleRequestOtp} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-            <div>
-              <label className="neu-label" style={{ display: "block", marginBottom: "8px" }}>Handle or Email</label>
-              <input
-                type="text"
-                placeholder="Enter handle or email..."
+          <form onSubmit={requestCode} className="flex flex-col gap-5">
+            <Field label="Handle or email" htmlFor="identifier">
+              <Input
+                id="identifier"
+                autoFocus
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="tourist or you@example.com"
                 value={handleOrEmail}
                 onChange={(e) => setHandleOrEmail(e.target.value)}
-                className="neu-input"
                 required
-                autoFocus
               />
-            </div>
-            <button type="submit" disabled={loading} className="neu-btn-primary neu-btn" style={{ padding: "14px", width: "100%", justifyContent: "center" }}>
-              {loading ? "Sending..." : (
-                <>
-                  <Mail style={{ width: 16, height: 16 }} />
-                  <span>Send OTP via Email</span>
-                </>
-              )}
-            </button>
+            </Field>
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={loading}
+              loadingText="Sending…"
+              icon={<Mail className="size-4" />}
+            >
+              Send code
+            </Button>
           </form>
         )}
 
         {step === "reset" && (
-          <form onSubmit={handleResetPassword} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-            <div>
-              <label className="neu-label" style={{ display: "block", marginBottom: "8px" }}>6-Digit OTP</label>
-              <input
-                type="text"
-                placeholder="Enter OTP..."
-                value={otp}
-                onChange={(e) => setOtp(e.target.value)}
-                className="neu-input"
-                maxLength={6}
-                required
+          <form onSubmit={resetPassword} className="flex flex-col gap-5">
+            <Field label="6-digit code" htmlFor="otp">
+              <Input
+                id="otp"
                 autoFocus
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="000000"
+                maxLength={6}
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                className="text-center font-mono text-lg tracking-[0.4em]"
+                required
               />
-            </div>
-            <div>
-              <label className="neu-label" style={{ display: "block", marginBottom: "8px" }}>New Password</label>
-              <input
+            </Field>
+
+            <Field
+              label="New password"
+              htmlFor="new-password"
+              hint="At least 8 characters, including a number."
+            >
+              <Input
+                id="new-password"
                 type="password"
-                placeholder="Enter new password..."
+                autoComplete="new-password"
+                placeholder="Choose a new password"
+                minLength={8}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="neu-input"
-                minLength={6}
                 required
               />
-            </div>
-            <button type="submit" disabled={loading} className="neu-btn-primary neu-btn" style={{ padding: "14px", width: "100%", justifyContent: "center" }}>
-              {loading ? "Updating..." : (
-                <>
-                  <CheckCircle2 style={{ width: 16, height: 16 }} />
-                  <span>Reset Password</span>
-                </>
-              )}
-            </button>
-            <button type="button" onClick={() => setStep("request")} className="neu-btn" style={{ padding: "10px", width: "100%", justifyContent: "center", fontSize: "0.8rem", border: "none", boxShadow: "none" }}>
-              Back
-            </button>
+            </Field>
+
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={loading}
+              loadingText="Updating…"
+              icon={<CheckCircle2 className="size-4" />}
+            >
+              Reset password
+            </Button>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              fullWidth
+              onClick={() => {
+                setStep("request");
+                setError(null);
+              }}
+            >
+              Use a different account
+            </Button>
           </form>
         )}
 
-        {step === "success" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "20px", alignItems: "center" }}>
-            <Link href="/" className="neu-btn-primary neu-btn" style={{ padding: "14px 24px" }}>
-              <span>Go to Home</span>
-              <ArrowRight style={{ width: 16, height: 16 }} />
-            </Link>
-          </div>
+        {step === "done" && (
+          <Link
+            href="/"
+            className={buttonStyles({
+              variant: "primary",
+              size: "lg",
+              fullWidth: true,
+            })}
+          >
+            Back to home
+            <ArrowRight className="size-4" />
+          </Link>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

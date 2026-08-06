@@ -1,145 +1,349 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  Swords, Zap, Shield, ArrowRight, CheckCircle2,
-  Code2, Braces, Terminal, FileCode2, Cpu
+  ArrowRight,
+  Clock,
+  Radio,
+  Shield,
+  Swords,
+  Target,
+  Users,
+  Zap,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
+import {
+  Alert,
+  Avatar,
+  Badge,
+  Button,
+  buttonStyles,
+  Card,
+  Divider,
+  EmptyState,
+  SectionTitle,
+  Skeleton,
+} from "@/components/ui";
+
+interface PublicRoom {
+  id: string;
+  code: string;
+  hostingType: string;
+  createdAt: string;
+  host: { handle: string; avatar: string; rating: number; elo: number };
+  contest: {
+    name: string;
+    mode: string;
+    problemCount: number;
+    durationMinutes: number;
+    minRating: number;
+    maxRating: number;
+  } | null;
+  series: { bestOf: number } | null;
+}
+
+const MODES = [
+  {
+    icon: Zap,
+    name: "Blitz",
+    href: "/create?mode=BLITZ",
+    blurb:
+      "A linear race. Solve the current problem to lock it and unlock the next one for both players.",
+  },
+  {
+    icon: Target,
+    name: "Lockout",
+    href: "/create?mode=LOCKOUT",
+    blurb:
+      "Every problem is open. The first accepted solution claims it permanently.",
+  },
+  {
+    icon: Shield,
+    name: "Classic",
+    href: "/create?mode=CLASSIC",
+    blurb:
+      "Traditional ICPC scoring — most solved wins, with penalty time breaking ties.",
+  },
+];
 
 export default function HomePage() {
   const { user } = useUser();
   const router = useRouter();
+
   const [roomCode, setRoomCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [rooms, setRooms] = useState<PublicRoom[] | null>(null);
 
-  const handleJoinRoom = (e: React.FormEvent) => {
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const res = await fetch("/api/rooms/public", { cache: "no-store" });
+        if (!res.ok) throw new Error();
+        const data = (await res.json()) as { rooms: PublicRoom[] };
+        if (!cancelled) setRooms(data.rooms);
+      } catch {
+        if (!cancelled) setRooms([]);
+      }
+    };
+
+    void load();
+    const id = setInterval(load, 20_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const joinByCode = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roomCode.trim()) return;
-    if (!user) { setError("Please sign in with your Codeforces handle first!"); return; }
-    router.push(`/room/${roomCode.trim().toUpperCase()}`);
+    const code = roomCode.trim().toUpperCase();
+    if (!code) return;
+    if (code.length !== 6) {
+      setError("Room codes are exactly 6 characters.");
+      return;
+    }
+    if (!user) {
+      setError("Sign in with your Codeforces handle first.");
+      return;
+    }
+    router.push(`/room/${code}`);
+  };
+
+  const joinPublic = (code: string) => {
+    if (!user) {
+      setError("Sign in with your Codeforces handle first.");
+      return;
+    }
+    router.push(`/room/${code}`);
   };
 
   return (
-    <div style={{ position: "fixed", top: 64, left: 0, right: 0, bottom: 0, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: "0 40px" }}>
-      
-      {/* ── Background Floating Icons ── */}
-      <div style={{ position: "absolute", inset: "-100px", overflow: "hidden", pointerEvents: "none", zIndex: -2 }}>
-        <Code2 style={{ position: "absolute", top: "10%", left: "5%", width: 140, height: 140, color: "#ffffff", opacity: 0.02, transform: "rotate(-15deg)" }} />
-        <Braces style={{ position: "absolute", bottom: "10%", left: "35%", width: 220, height: 220, color: "#ffffff", opacity: 0.015, transform: "rotate(10deg)" }} />
-        <Terminal style={{ position: "absolute", top: "15%", right: "8%", width: 160, height: 160, color: "#ffffff", opacity: 0.02, transform: "rotate(25deg)" }} />
-        <FileCode2 style={{ position: "absolute", bottom: "15%", right: "20%", width: 120, height: 120, color: "#ffffff", opacity: 0.02, transform: "rotate(-10deg)" }} />
-        <Cpu style={{ position: "absolute", top: "50%", left: "45%", width: 90, height: 90, color: "#ffffff", opacity: 0.02, transform: "rotate(5deg)" }} />
-      </div>
+    <div className="flex flex-col gap-14 sm:gap-20">
+      {/* ── Hero ──────────────────────────────────────────────────────────── */}
+      <section className="grid items-center gap-10 pt-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:gap-16 lg:pt-10">
+        <div className="animate-blur-reveal">
+          <Badge tone="brand" className="mb-5">
+            <Radio className="size-3" />
+            Live 1v1 on Codeforces problems
+          </Badge>
 
-      <div style={{ position: "relative", maxWidth: 1200, width: "100%", display: "flex", flexDirection: "row", alignItems: "center", gap: 80, justifyContent: "space-between", flexWrap: "wrap", zIndex: 1 }}>
+          <h1 className="text-display text-ink">
+            Duel programmers
+            <br />
+            <span className="font-medium text-ink-faint">in real time</span>
+          </h1>
 
-      {/* ── Left Side (Hero) ── */}
-      <section className="animate-blur-reveal" style={{ textAlign: "left", flex: "1 1 400px", maxWidth: 500 }}>
-        <div style={{
-          position: "absolute",
-          top: "30%",
-          left: "20%",
-          transform: "translate(-50%, -50%)",
-          width: "50vw",
-          height: "60vh",
-          background: "radial-gradient(circle, rgba(255,255,255,0.03) 0%, rgba(0,0,0,0) 70%)",
-          pointerEvents: "none",
-          zIndex: -1
-        }} />
-        <h1 style={{
-          fontSize: "clamp(3rem, 6vw, 5rem)",
-          fontWeight: 800,
-          lineHeight: 1.05,
-          color: "#FFFFFF",
-          marginBottom: 24,
-          letterSpacing: "-0.05em",
-        }}>
-          Duel Programmers<br />
-          <span style={{ color: "var(--text-muted)", fontWeight: 500, fontSize: "clamp(2.5rem, 4.5vw, 4rem)" }}>in Real-Time</span>
-        </h1>
+          <p className="mt-5 max-w-lg text-base leading-relaxed text-ink-dim sm:text-lg">
+            Pick a mode, share a code, and race an opponent through problems
+            neither of you has solved. Verdicts land on the scoreboard the
+            moment Codeforces judges them.
+          </p>
 
-        <p style={{
-          fontSize: "1.1rem",
-          color: "var(--text-secondary)",
-          maxWidth: 480,
-          marginBottom: 48,
-          lineHeight: 1.6,
-        }}>
-          Race through Blitz Mode or outsmart opponents in Classic Duel — powered by official Codeforces problems.
-        </p>
-
-        {/* Join / Create actions */}
-        <div style={{ maxWidth: 360, display: "flex", flexDirection: "column", gap: 32 }}>
-          <form onSubmit={handleJoinRoom} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <form
+            onSubmit={joinByCode}
+            className="mt-8 flex max-w-md flex-col gap-3 sm:flex-row"
+          >
             <input
               type="text"
-              placeholder="Enter Room Code..."
+              inputMode="text"
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="ROOM CODE"
               value={roomCode}
-              onChange={(e) => { setRoomCode(e.target.value.toUpperCase()); setError(null); }}
               maxLength={6}
-              className="neu-input-minimal font-mono"
-              style={{ textAlign: "left", letterSpacing: "0.2em", fontSize: "1.2rem" }}
+              onChange={(e) => {
+                setRoomCode(e.target.value.toUpperCase());
+                setError(null);
+              }}
+              className="h-12 min-w-0 flex-1 rounded-full border border-line bg-elevated px-5 text-center font-mono text-lg tracking-[0.35em] text-ink outline-none placeholder:tracking-[0.2em] placeholder:text-ink-faint focus:border-ink-dim sm:text-left"
             />
-            <button type="submit" className="neu-btn-primary neu-btn" style={{ padding: "14px", borderRadius: "var(--r-pill)", width: "100%", justifyContent: "center", fontSize: "0.95rem" }}>
-              <span>Join Duel</span>
-            </button>
+            <Button type="submit" variant="primary" size="lg" className="shrink-0">
+              Join duel
+            </Button>
           </form>
 
           {error && (
-            <p className="animate-shake" style={{ fontSize: "0.85rem", color: "var(--danger)", fontWeight: 600, marginTop: "-16px" }}>{error}</p>
+            <Alert tone="warning" shake className="mt-4 max-w-md">
+              {error}
+            </Alert>
           )}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 16, opacity: 0.5 }}>
-            <hr className="neu-divider" style={{ flex: 1 }} />
-            <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 600, letterSpacing: "0.1em" }}>OR</span>
-            <hr className="neu-divider" style={{ flex: 1 }} />
+          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+            <Link
+              href="/create"
+              className={buttonStyles({ variant: "outline", size: "md" })}
+            >
+              Host a new duel
+              <ArrowRight className="size-4" />
+            </Link>
+            <Link
+              href="/create?solo=1"
+              className="text-sm font-semibold text-ink-dim no-underline transition-colors hover:text-ink"
+            >
+              or practise solo →
+            </Link>
           </div>
+        </div>
 
-          <Link href="/create" className="minimal-link-group" style={{ justifyContent: "center", fontSize: "1rem" }}>
-            <span>Host a new contest</span>
-            <ArrowRight className="arrow-icon" style={{ width: 16, height: 16 }} />
-          </Link>
+        {/* Mode cards */}
+        <div className="stagger flex flex-col gap-3">
+          {MODES.map((mode) => (
+            <Link key={mode.name} href={mode.href} className="no-underline">
+              <Card interactive padding="sm" className="flex items-start gap-3.5">
+                <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-white/5">
+                  <mode.icon className="size-4 text-ink-dim" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-base font-bold text-ink">{mode.name}</h2>
+                  <p className="mt-1 text-[0.8rem] leading-relaxed text-ink-faint">
+                    {mode.blurb}
+                  </p>
+                </div>
+              </Card>
+            </Link>
+          ))}
         </div>
       </section>
 
-      {/* ── Right Side (Mode Cards) ── */}
-      <section className="stagger-children" style={{ display: "flex", flexDirection: "column", gap: 64, flex: "1 1 400px", maxWidth: 440 }}>
-        
-        {/* Blitz Mode */}
-        <div style={{ padding: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-            <Zap style={{ width: 20, height: 20, color: "var(--text-muted)" }} />
-            <h2 style={{ fontWeight: 600, fontSize: "1.4rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.02em" }}>Blitz Mode</h2>
-          </div>
-          <p style={{ fontSize: "0.95rem", color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 20, maxWidth: 360 }}>
-            High-speed linear race where solved problems are permanently locked for your opponent.
-          </p>
-          <Link href="/create?mode=BLITZ" className="minimal-link-group">
-            <span>Host Blitz</span>
-            <ArrowRight className="arrow-icon" style={{ width: 14, height: 14 }} />
-          </Link>
-        </div>
+      <Divider />
 
-        {/* Classic Duel */}
-        <div style={{ padding: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-            <Shield style={{ width: 20, height: 20, color: "var(--text-muted)" }} />
-            <h2 style={{ fontWeight: 600, fontSize: "1.4rem", color: "#FFFFFF", margin: 0, letterSpacing: "-0.02em" }}>Classic Duel</h2>
-          </div>
-          <p style={{ fontSize: "0.95rem", color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 20, maxWidth: 360 }}>
-            Traditional ICPC style contest with penalty time calculations.
-          </p>
-          <Link href="/create?mode=CLASSIC" className="minimal-link-group">
-            <span>Host Classic</span>
-            <ArrowRight className="arrow-icon" style={{ width: 14, height: 14 }} />
-          </Link>
-        </div>
+      {/* ── Open duels ────────────────────────────────────────────────────── */}
+      <section className="flex flex-col gap-5">
+        <SectionTitle
+          icon={<Users className="size-4" />}
+          action={
+            <Link
+              href="/create"
+              className="text-xs font-bold text-ink-dim no-underline hover:text-ink"
+            >
+              Host one →
+            </Link>
+          }
+        >
+          Open duels
+        </SectionTitle>
 
+        {rooms === null ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {[0, 1].map((i) => (
+              <Skeleton key={i} className="h-28 rounded-lg" />
+            ))}
+          </div>
+        ) : rooms.length === 0 ? (
+          <EmptyState
+            icon={<Swords className="size-5" />}
+            title="No open duels right now"
+            message="Host a public room and it'll show up here for anyone to join — or share a code directly with a friend."
+            action={
+              <Link
+                href="/create"
+                className={buttonStyles({
+                  variant: "secondary",
+                  size: "sm",
+                  className: "mt-1",
+                })}
+              >
+                Host a duel
+              </Link>
+            }
+          />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {rooms.map((room) => (
+              <Card
+                key={room.id}
+                padding="sm"
+                className="flex flex-col gap-3.5"
+              >
+                <div className="flex items-start gap-3">
+                  <Avatar
+                    src={room.host.avatar}
+                    alt={room.host.handle}
+                    size="sm"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-ink">
+                      {room.contest?.name ?? "Duel"}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-ink-faint">
+                      hosted by {room.host.handle} · {room.host.elo} Elo
+                    </p>
+                  </div>
+                  <span className="shrink-0 font-mono text-xs font-bold tracking-widest text-brand">
+                    {room.code}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge tone="neutral">{room.contest?.mode}</Badge>
+                  <Badge tone="neutral">
+                    {room.contest?.problemCount} problems
+                  </Badge>
+                  <Badge tone="neutral" icon={<Clock className="size-3" />}>
+                    {room.contest?.durationMinutes}m
+                  </Badge>
+                  <Badge tone="neutral">
+                    {room.contest?.minRating}–{room.contest?.maxRating}
+                  </Badge>
+                  {room.series && room.series.bestOf > 1 && (
+                    <Badge tone="warning">Best of {room.series.bestOf}</Badge>
+                  )}
+                </div>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  fullWidth
+                  onClick={() => joinPublic(room.code)}
+                >
+                  Join
+                </Button>
+              </Card>
+            ))}
+          </div>
+        )}
       </section>
-      </div>
+
+      {/* ── How it works ──────────────────────────────────────────────────── */}
+      <section className="flex flex-col gap-5">
+        <SectionTitle icon={<Swords className="size-4" />}>
+          How a duel works
+        </SectionTitle>
+        <ol className="grid gap-3 sm:grid-cols-3">
+          {[
+            {
+              step: "01",
+              title: "Host or join",
+              body: "Set the mode, problem count, rating band and duration — or drop into an open room.",
+            },
+            {
+              step: "02",
+              title: "Solve on Codeforces",
+              body: "Problems open on Codeforces as normal. Submit there with your own handle.",
+            },
+            {
+              step: "03",
+              title: "Watch it land",
+              body: "Verdicts are picked up automatically and pushed to both scoreboards live.",
+            },
+          ].map((item) => (
+            <li key={item.step} className="panel rounded-lg p-5">
+              <span className="font-mono text-xs font-bold text-ink-faint">
+                {item.step}
+              </span>
+              <h3 className="mt-2 text-base font-bold text-ink">{item.title}</h3>
+              <p className="mt-1.5 text-[0.82rem] leading-relaxed text-ink-faint">
+                {item.body}
+              </p>
+            </li>
+          ))}
+        </ol>
+      </section>
     </div>
   );
 }
