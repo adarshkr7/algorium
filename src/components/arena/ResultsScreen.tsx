@@ -26,6 +26,7 @@ import {
 } from "@/lib/format";
 import {
   compareStats,
+  determineWinner,
   primaryScore,
   primaryScoreLabel,
   problemPoints,
@@ -82,10 +83,15 @@ export function ResultsScreen({
   const [rematching, setRematching] = useState(false);
 
   const isSolo = contest.isSolo;
-  const winnerId = winnerInfo?.winnerId ?? null;
-  const isDraw = winnerInfo?.isDraw ?? !winnerId;
+  const winningParticipant = contest.participants?.find((p) => p.isWinner);
+  const derivedWinnerId =
+    winningParticipant?.userId ??
+    (!isSolo && standings ? determineWinner(contest, standings) : null);
+  const winnerId = winnerInfo?.winnerId ?? derivedWinnerId;
+  const isDraw = winnerInfo?.isDraw ?? (!isSolo && !winnerId);
   const winnerHandle =
     winnerInfo?.winnerHandle ??
+    winningParticipant?.user?.handle ??
     (winnerId === player1?.id
       ? player1?.handle
       : winnerId === player2?.id

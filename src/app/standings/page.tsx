@@ -10,7 +10,7 @@ import { Avatar, Badge, EmptyState, PageHeader } from "@/components/ui";
 import { buttonStyles } from "@/components/ui/button-styles";
 
 export const metadata: Metadata = { title: "Standings" };
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
 
 const LIMIT = 100;
 

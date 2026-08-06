@@ -42,6 +42,14 @@ export interface ArenaSeries {
   winnerId: string | null;
 }
 
+export interface ArenaParticipant {
+  id?: string;
+  userId: string;
+  isWinner?: boolean;
+  hasResigned?: boolean;
+  user?: ArenaPlayer | null;
+}
+
 export interface ArenaContest {
   id: string;
   name: string;
@@ -55,6 +63,7 @@ export interface ArenaContest {
   isSolo: boolean;
   problems: ArenaProblem[];
   submissions: ArenaSubmission[];
+  participants?: ArenaParticipant[];
 }
 
 export interface ArenaRoom {

@@ -6,7 +6,7 @@ import { createClient } from "@/utils/supabase/client";
 import { apiFetch } from "@/lib/api-client";
 import { useUser } from "@/context/UserContext";
 import { useToast } from "@/components/ui";
-import { calculateStandings, type Standings } from "@/lib/services/standings";
+import { calculateStandings, determineWinner, type Standings } from "@/lib/services/standings";
 import { problemLetter } from "@/lib/format";
 import type {
   ArenaProblem,
@@ -126,6 +126,28 @@ export function useArena(code: string) {
         if (r.contest.status === "FINISHED") {
           finishedRef.current = true;
           setIsFinished(true);
+
+          const p1 = (r.hostingType === "SUPERVISED" ? r.player1 : r.host) ?? null;
+          const p2 = (r.hostingType === "SUPERVISED" ? r.player2 : r.guest) ?? null;
+          const st = calculateStandings(r.contest, p1, p2);
+          const winnerParticipant = r.contest.participants?.find((p) => p.isWinner);
+          const wId =
+            winnerParticipant?.userId ??
+            (!r.contest.isSolo ? determineWinner(r.contest, st) : null);
+          const wHandle =
+            (wId === p1?.id ? p1?.handle : wId === p2?.id ? p2?.handle : null) ??
+            null;
+          const isDr = !r.contest.isSolo && !wId;
+
+          setWinnerInfo({
+            winnerId: wId,
+            winnerHandle: wHandle,
+            isDraw: isDr,
+            reason: "all_solved",
+            standings: st,
+            eloChanges: {},
+            series: r.series,
+          });
         }
 
         if (r.contest.startTime) {
@@ -195,21 +217,29 @@ export function useArena(code: string) {
           winnerHandle: string;
           nextIndex: number;
         };
-        toast.push(
-          `${winnerHandle} locked it — problem ${problemLetter(nextIndex)} is next`,
-          "warning",
-        );
-        setBlitzCountdown(3);
-        const id = setInterval(() => {
-          setBlitzCountdown((prev) => {
-            if (prev === null || prev <= 1) {
-              clearInterval(id);
-              setSelectedIndex(nextIndex);
-              return null;
-            }
-            return prev - 1;
-          });
-        }, 1000);
+        setProblems((prevProblems) => {
+          const hasNext = nextIndex < prevProblems.length;
+          if (hasNext) {
+            toast.push(
+              `${winnerHandle} locked it — problem ${problemLetter(nextIndex)} is next`,
+              "warning",
+            );
+            setBlitzCountdown(3);
+            const id = setInterval(() => {
+              setBlitzCountdown((prev) => {
+                if (prev === null || prev <= 1) {
+                  clearInterval(id);
+                  setSelectedIndex(nextIndex);
+                  return null;
+                }
+                return prev - 1;
+              });
+            }, 1000);
+          } else {
+            toast.push(`${winnerHandle} locked the final problem!`, "warning");
+          }
+          return prevProblems;
+        });
       })
       .on("broadcast", { event: "contest-finished" }, ({ payload }) => {
         applyFinish(payload as WinnerInfo);
@@ -255,7 +285,35 @@ export function useArena(code: string) {
       if (data.winnerInfo) {
         applyFinish(data.winnerInfo);
       } else if (data.contestStatus === "FINISHED") {
-        applyFinish({ winnerId: null, winnerHandle: null, isDraw: true });
+        setRoom((currentRoom) => {
+          if (currentRoom?.contest) {
+            const p1 =
+              (currentRoom.hostingType === "SUPERVISED"
+                ? currentRoom.player1
+                : currentRoom.host) ?? null;
+            const p2 =
+              (currentRoom.hostingType === "SUPERVISED"
+                ? currentRoom.player2
+                : currentRoom.guest) ?? null;
+            const st = data.standings ?? calculateStandings(currentRoom.contest, p1, p2);
+            const winnerParticipant = currentRoom.contest.participants?.find(
+              (p) => p.isWinner,
+            );
+            const wId =
+              winnerParticipant?.userId ??
+              (!currentRoom.contest.isSolo ? determineWinner(currentRoom.contest, st) : null);
+            const wHandle =
+              (wId === p1?.id ? p1?.handle : wId === p2?.id ? p2?.handle : null) ??
+              null;
+            applyFinish({
+              winnerId: wId,
+              winnerHandle: wHandle,
+              isDraw: !currentRoom.contest.isSolo && !wId,
+              standings: st,
+            });
+          }
+          return currentRoom;
+        });
       }
     } catch {
       // Silent: realtime is the primary channel, this is only a safety net.

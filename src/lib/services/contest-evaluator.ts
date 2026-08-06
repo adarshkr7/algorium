@@ -4,7 +4,7 @@ import { fetchCFUserSubmissions } from "@/lib/codeforces";
 import { BroadcastService } from "./broadcast";
 import { finishContest, type FinishResult } from "./contest-finalizer";
 import { processUserSubs } from "./submission-processor";
-import { calculateStandings, type Standings } from "./standings";
+import { calculateStandings, determineWinner, type Standings } from "./standings";
 
 /**
  * One shared evaluation pass, used by both the background worker and the
@@ -107,7 +107,44 @@ export async function evaluateContest(
 
   if (!contest) return empty;
   if (contest.status === "FINISHED" || contest.status === "CANCELLED") {
-    return { ...empty, status: "FINISHED", contest };
+    const player1 = contest.room.player1 ?? contest.room.host;
+    const player2 = contest.room.player2 ?? contest.room.guest;
+    const standings = calculateStandings(contest, player1, player2 ?? null);
+    const winnerParticipant = contest.participants.find((p) => p.isWinner);
+    const winnerId =
+      winnerParticipant?.userId ??
+      (!contest.isSolo ? determineWinner(contest, standings) : null);
+    const winnerHandle =
+      winnerId === player1?.id
+        ? player1?.handle
+        : winnerId === player2?.id
+          ? player2?.handle
+          : null;
+    const isDraw = !contest.isSolo && !winnerId;
+
+    const finish: FinishResult = {
+      winnerId,
+      winnerHandle,
+      isDraw,
+      isSolo: contest.isSolo,
+      reason: "all_solved",
+      standings,
+      eloChanges: {},
+      series: contest.room.series
+        ? {
+            id: contest.room.series.id,
+            bestOf: contest.room.series.bestOf,
+            player1Id: contest.room.series.player1Id,
+            player2Id: contest.room.series.player2Id,
+            player1Wins: contest.room.series.player1Wins,
+            player2Wins: contest.room.series.player2Wins,
+            status: contest.room.series.status,
+            winnerId: contest.room.series.winnerId,
+          }
+        : null,
+    };
+
+    return { ...empty, status: "FINISHED", contest, standings, finish };
   }
   if (!contest.startTime) {
     return { ...empty, status: "NOT_STARTED", contest };
