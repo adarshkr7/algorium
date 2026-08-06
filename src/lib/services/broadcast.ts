@@ -29,7 +29,8 @@ export interface SeriesSnapshot {
   id: string;
   bestOf: number;
   player1Id: string;
-  player2Id: string;
+  /** Null until the opponent joins the first game of the series. */
+  player2Id: string | null;
   player1Wins: number;
   player2Wins: number;
   status: string;
