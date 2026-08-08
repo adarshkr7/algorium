@@ -29,9 +29,12 @@ export const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
     "bg-elevated text-ink border-line-strong hover:bg-line-strong hover:border-ink-faint",
   ghost:
     "bg-transparent text-ink-dim border-transparent hover:bg-white/5 hover:text-ink",
+  // Monochrome: destructive intent reads through the dashed-dim resting state
+  // lifting to full contrast on hover, not through hue.
   danger:
-    "bg-transparent text-danger border-danger/35 hover:bg-danger hover:text-white hover:border-danger",
-  success: "bg-brand text-white border-transparent hover:bg-brand-bright",
+    "bg-transparent text-danger border-danger/45 hover:bg-white/6 hover:text-ink hover:border-ink/70",
+  success:
+    "bg-brand text-ink-invert border-transparent hover:bg-brand-bright",
   outline:
     "bg-transparent text-ink border-white/15 hover:border-white/35 hover:bg-white/5",
 };

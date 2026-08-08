@@ -43,8 +43,10 @@ export function Field({
         </div>
       )}
       {children}
+      {/* The error line sits at full ink rather than the recessed danger grey —
+          a validation message is the one thing on the field that has to be read. */}
       {error ? (
-        <p className="animate-shake text-xs font-semibold text-danger">{error}</p>
+        <p className="animate-shake text-xs font-semibold text-ink">{error}</p>
       ) : hint ? (
         <p className="text-xs leading-relaxed text-ink-faint">{hint}</p>
       ) : null}
@@ -62,7 +64,7 @@ export const Input = React.forwardRef<
       className={cn(
         CONTROL_BASE,
         "h-11",
-        invalid && "border-danger/60 focus:border-danger",
+        invalid && "border-ink/70 focus:border-ink",
         className,
       )}
       {...rest}
@@ -149,7 +151,9 @@ export function Chip({
       className={cn(
         "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors duration-150 cursor-pointer",
         state === "include" && "border-ink bg-ink text-ink-invert",
-        state === "exclude" && "border-danger bg-danger text-white",
+        // Excluded reads as a struck-through, recessed chip rather than a red one.
+        state === "exclude" &&
+          "border-line-strong bg-white/6 text-ink-faint line-through decoration-ink-faint",
         state === "off" &&
           "border-white/15 bg-transparent text-ink-dim hover:border-white/35 hover:text-ink",
         className,
@@ -202,14 +206,15 @@ export function Switch({
         onClick={() => onChange(!checked)}
         className={cn(
           "relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors duration-200 cursor-pointer",
-          checked ? "bg-brand" : "bg-line-strong",
+          checked ? "bg-ink" : "bg-line-strong",
           disabled && "cursor-not-allowed",
         )}
       >
+        {/* The knob inverts with the track so it stays visible in both states. */}
         <span
           className={cn(
-            "absolute top-0.5 size-5 rounded-full bg-white transition-[left] duration-200",
-            checked ? "left-[22px]" : "left-0.5",
+            "absolute top-0.5 size-5 rounded-full transition-[left,background-color] duration-200",
+            checked ? "left-[22px] bg-canvas" : "left-0.5 bg-ink",
           )}
         />
       </button>

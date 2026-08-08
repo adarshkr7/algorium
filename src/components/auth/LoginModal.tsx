@@ -348,7 +348,7 @@ export function LoginModal({
                 </li>
                 <li>
                   Wait for the{" "}
-                  <strong className="text-danger">COMPILATION ERROR</strong>{" "}
+                  <strong className="text-ink">COMPILATION ERROR</strong>{" "}
                   verdict
                 </li>
                 <li>Come back and press Verify</li>

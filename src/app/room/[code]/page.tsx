@@ -364,7 +364,7 @@ export default function RoomLobbyPage({
       {/* ── Players ───────────────────────────────────────────────────────── */}
       <section className="flex flex-col">
         {isSupervised && (
-          <div className="mb-4 flex items-center gap-2.5 rounded-md border border-warning/25 bg-warning/8 px-4 py-3 text-[0.82rem] font-semibold text-warning">
+          <div className="mb-4 flex items-center gap-2.5 rounded-md border border-white/22 bg-white/6 px-4 py-3 text-[0.82rem] font-semibold text-ink">
             <Eye className="size-4 shrink-0" />
             <span>
               {room.host.handle} is supervising this match.

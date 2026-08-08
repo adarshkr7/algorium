@@ -102,7 +102,13 @@ export function ResultsScreen({
 
   useEffect(() => {
     if (!iWon) return;
-    confetti({ particleCount: 130, spread: 82, origin: { y: 0.6 } });
+    confetti({
+      particleCount: 130,
+      spread: 82,
+      origin: { y: 0.6 },
+      // Greyscale, to match the monochrome surface it lands on.
+      colors: ["#FFFFFF", "#D4D4D4", "#9C9C9C", "#5A5A5A"],
+    });
   }, [iWon]);
 
   const rows = [
@@ -167,17 +173,17 @@ export function ResultsScreen({
       <div
         className={cn(
           "rounded-xl border px-5 py-7 text-center",
-          isSolo
+          // Monochrome hierarchy: a decided win gets the brighter panel, so the
+          // outcome still carries weight without a colour to lean on.
+          isSolo || isDraw
             ? "border-white/8 bg-white/2"
-            : isDraw
-              ? "border-white/8 bg-white/2"
-              : "border-warning/25 bg-warning/6",
+            : "border-white/20 bg-white/6",
         )}
       >
         <p
           className={cn(
             "text-2xl font-extrabold tracking-tight sm:text-3xl",
-            isSolo || isDraw ? "text-ink" : "text-warning",
+            isSolo || isDraw ? "text-ink" : "text-success",
           )}
         >
           {isSolo
@@ -240,7 +246,7 @@ export function ResultsScreen({
                 )}
               >
                 {!isSolo && (
-                  <span className="w-7 shrink-0 text-center text-xl">
+                  <span className="mono-emoji w-7 shrink-0 text-center text-xl">
                     {rank === 0 ? "🥇" : "🥈"}
                   </span>
                 )}

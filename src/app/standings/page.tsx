@@ -80,6 +80,7 @@ export default async function StandingsPage() {
                     className={cn(
                       "w-8 shrink-0 text-center font-mono text-sm font-extrabold sm:w-10 sm:text-base",
                       i < 3 ? "text-warning" : "text-ink-faint",
+                      medal && "mono-emoji",
                     )}
                   >
                     {medal ?? `#${i + 1}`}

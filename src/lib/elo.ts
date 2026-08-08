@@ -63,14 +63,20 @@ export interface EloTier {
   className: string;
 }
 
-/** Cosmetic tiers shown on the standings page and profiles. */
+/**
+ * Cosmetic tiers shown on the standings page and profiles.
+ *
+ * The palette is monochrome, so rank is expressed as a descending
+ * contrast/weight ramp — the higher the tier, the brighter and heavier it
+ * renders. Keep the steps in order; that ordering *is* the hierarchy.
+ */
 export const ELO_TIERS: EloTier[] = [
-  { name: "Grandmaster", min: 2200, className: "text-danger" },
-  { name: "Master", min: 1900, className: "text-warning" },
-  { name: "Expert", min: 1600, className: "text-info" },
-  { name: "Specialist", min: 1400, className: "text-success" },
-  { name: "Challenger", min: 1200, className: "text-ink" },
-  { name: "Rookie", min: 0, className: "text-ink-faint" },
+  { name: "Grandmaster", min: 2200, className: "text-white font-extrabold" },
+  { name: "Master", min: 1900, className: "text-neutral-200 font-bold" },
+  { name: "Expert", min: 1600, className: "text-neutral-300 font-bold" },
+  { name: "Specialist", min: 1400, className: "text-neutral-400 font-semibold" },
+  { name: "Challenger", min: 1200, className: "text-neutral-500 font-semibold" },
+  { name: "Rookie", min: 0, className: "text-neutral-600 font-medium" },
 ];
 
 export function eloTier(elo: number): EloTier {

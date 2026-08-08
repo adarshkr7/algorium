@@ -14,6 +14,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
+import { cn } from "@/lib/cn";
 import {
   Alert,
   Avatar,
@@ -160,7 +161,18 @@ export default function HomePage() {
                 setRoomCode(e.target.value.toUpperCase());
                 setError(null);
               }}
-              className="h-12 min-w-0 flex-1 rounded-full border border-line bg-elevated px-5 text-center font-mono text-lg tracking-[0.35em] text-ink outline-none placeholder:tracking-[0.2em] placeholder:text-ink-faint focus:border-ink-dim sm:text-left"
+              className={cn(
+                // `flex-1` only from sm up: the form stacks on mobile, where a
+                // vertical main axis turns flex-basis:0 into a collapsed
+                // *height* and squashes the field to its line box.
+                "h-13 w-full min-w-0 sm:flex-1",
+                "rounded-full border border-line-strong bg-elevated px-5",
+                // 16px on mobile keeps iOS from zooming the page on focus.
+                "text-center font-mono text-base tracking-[0.35em] text-ink sm:text-left sm:text-lg",
+                "outline-none transition-colors duration-200",
+                "placeholder:tracking-[0.2em] placeholder:text-ink-faint",
+                "focus:border-ink-dim",
+              )}
             />
             <Button type="submit" variant="primary" size="lg" className="shrink-0">
               Join duel

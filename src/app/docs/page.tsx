@@ -15,6 +15,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { ELO_TIERS } from "@/lib/elo";
 import { Badge, buttonStyles, Card, SectionTitle } from "@/components/ui";
 
 const SECTIONS = [
@@ -258,12 +259,14 @@ export default function DocsPage() {
               while it finds your level. Resigning counts as a loss. Solo
               practice never affects it.
             </p>
+            {/* Driven off ELO_TIERS so the ladder here can't drift out of step
+                with the tier styling used on standings and profiles. */}
             <div className="mt-1 flex flex-wrap gap-1.5">
-              <Badge tone="danger">Grandmaster 2200+</Badge>
-              <Badge tone="warning">Master 1900+</Badge>
-              <Badge tone="info">Expert 1600+</Badge>
-              <Badge tone="success">Specialist 1400+</Badge>
-              <Badge tone="neutral">Challenger 1200+</Badge>
+              {ELO_TIERS.filter((t) => t.min > 0).map((t) => (
+                <Badge key={t.name} tone="neutral" className={t.className}>
+                  {t.name} {t.min}+
+                </Badge>
+              ))}
             </div>
           </Card>
           <Link

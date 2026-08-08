@@ -134,22 +134,28 @@ export function EmptyState({
 
 export type AlertTone = "info" | "success" | "warning" | "danger";
 
+/**
+ * With no hue to signal severity, the message text stays at full ink on every
+ * tone (an error must never be harder to read than a hint) and urgency is
+ * carried by the surface: the louder the tone, the brighter its border and
+ * wash. The icon names the tone outright.
+ */
 const ALERT_STYLES: Record<AlertTone, { wrap: string; icon: React.ReactNode }> = {
   info: {
-    wrap: "border-white/10 bg-white/4 text-ink",
-    icon: <Info className="size-4 shrink-0 text-info" />,
+    wrap: "border-white/10 bg-white/3 text-ink-dim",
+    icon: <Info className="size-4 shrink-0 text-ink-faint" />,
   },
   success: {
-    wrap: "border-success/25 bg-success/8 text-success",
-    icon: <CheckCircle2 className="size-4 shrink-0" />,
+    wrap: "border-white/18 bg-white/5 text-ink",
+    icon: <CheckCircle2 className="size-4 shrink-0 text-success" />,
   },
   warning: {
-    wrap: "border-warning/25 bg-warning/8 text-warning",
-    icon: <AlertTriangle className="size-4 shrink-0" />,
+    wrap: "border-white/22 bg-white/6 text-ink",
+    icon: <AlertTriangle className="size-4 shrink-0 text-warning" />,
   },
   danger: {
-    wrap: "border-danger/25 bg-danger/8 text-danger",
-    icon: <ShieldAlert className="size-4 shrink-0" />,
+    wrap: "border-white/40 bg-white/8 text-ink",
+    icon: <ShieldAlert className="size-4 shrink-0 text-ink" />,
   },
 };
 

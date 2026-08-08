@@ -3,7 +3,15 @@
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ALGORIUM DESIGN SYSTEM
-   Dark-only. Black canvas, near-white ink, green brand accent.
+   Dark-only, strictly monochrome. Black canvas, neutral-grey ramp, no hue
+   anywhere — semantics are carried by *luminance* (and by the icon/label that
+   sits next to them) rather than by colour:
+
+       success  brightest  ─ wins, accepted, positive delta
+       warning  bright     ─ pending, caution, leader marks
+       info     mid        ─ neutral information
+       danger   dim        ─ losses, errors, rejections (recedes)
+
    Tokens below are exposed to Tailwind via @theme, so every value here is
    usable as a utility class (bg-surface, text-ink-dim, border-line, ...).
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -11,25 +19,25 @@
 @theme {
   /* ── Surfaces ───────────────────────────────────────────────────────── */
   --color-canvas:      #000000;
-  --color-surface:     #0A0A0C;
-  --color-surface-2:   #111114;
-  --color-elevated:    #18181B;
-  --color-line:        #1E1E22;
-  --color-line-strong: #2E2E34;
+  --color-surface:     #080808;
+  --color-surface-2:   #0E0E0E;
+  --color-elevated:    #151515;
+  --color-line:        #1C1C1C;
+  --color-line-strong: #2B2B2B;
 
   /* ── Ink ────────────────────────────────────────────────────────────── */
-  --color-ink:         #FAFAFA;
-  --color-ink-dim:     #A1A1AA;
-  --color-ink-faint:   #71717A;
-  --color-ink-invert:  #09090B;
+  --color-ink:         #F0F0F0;
+  --color-ink-dim:     #A3A3A3;
+  --color-ink-faint:   #6F6F6F;
+  --color-ink-invert:  #000000;
 
-  /* ── Brand & semantics ──────────────────────────────────────────────── */
-  --color-brand:        #16A34A;
-  --color-brand-bright: #22C55E;
-  --color-success:      #10B981;
-  --color-warning:      #F59E0B;
-  --color-danger:       #EF4444;
-  --color-info:         #60A5FA;
+  /* ── Brand & semantics — greyscale only ─────────────────────────────── */
+  --color-brand:        #E5E5E5;
+  --color-brand-bright: #FFFFFF;
+  --color-success:      #FFFFFF;
+  --color-warning:      #BDBDBD;
+  --color-danger:       #858585;
+  --color-info:         #9C9C9C;
 
   /* ── Typography ─────────────────────────────────────────────────────── */
   --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -67,21 +75,21 @@
    references var(--text-primary) et al. keeps rendering correctly. */
 :root,
 [data-theme="dark"] {
-  --bg-main: #09090B;
-  --bg-subtle: #18181B;
-  --bg-hover: #27272A;
-  --bg-invert: #FAFAFA;
-  --text-primary: #FAFAFA;
-  --text-secondary: #A1A1AA;
-  --text-muted: #71717A;
-  --text-invert: #09090B;
-  --border: #27272A;
-  --border-hover: #3F3F46;
-  --accent: #FAFAFA;
-  --success: #10B981;
-  --warning: #F59E0B;
-  --danger: #EF4444;
-  --danger-soft: rgba(239, 68, 68, 0.1);
+  --bg-main: #000000;
+  --bg-subtle: #151515;
+  --bg-hover: #242424;
+  --bg-invert: #F0F0F0;
+  --text-primary: #F0F0F0;
+  --text-secondary: #A3A3A3;
+  --text-muted: #6F6F6F;
+  --text-invert: #000000;
+  --border: #1C1C1C;
+  --border-hover: #3A3A3A;
+  --accent: #F0F0F0;
+  --success: #FFFFFF;
+  --warning: #BDBDBD;
+  --danger: #858585;
+  --danger-soft: rgba(255, 255, 255, 0.08);
   --modal-backdrop: rgba(0, 0, 0, 0.78);
   --r-sm: 6px;
   --r-md: 12px;
@@ -137,7 +145,7 @@
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--color-line-strong); border-radius: 999px; }
-  ::-webkit-scrollbar-thumb:hover { background: #45454d; }
+  ::-webkit-scrollbar-thumb:hover { background: #444444; }
 
   :focus-visible {
     outline: none;
@@ -176,7 +184,15 @@
   }
 
   /* Native select options render on the OS layer — force dark. */
-  select option { background: #0A0A0C; color: #FAFAFA; }
+  select option { background: #0E0E0E; color: #F0F0F0; }
+
+  /* Any raster/vector asset that ships with colour (logo, avatars, embeds)
+     is desaturated so nothing breaks the black-and-white surface. */
+  img,
+  video,
+  svg image {
+    filter: grayscale(1);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -217,6 +233,12 @@
   font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+/* Emoji are painted by the OS colour font and ignore `color`, so the medals
+   need an explicit desaturation to stay inside the black-and-white palette. */
+@utility mono-emoji {
+  filter: grayscale(1) contrast(1.05);
 }
 
 /* The faint hairline surface used for practically every panel in the app. */
@@ -276,9 +298,9 @@
 }
 
 @keyframes pulse-ring {
-  0%   { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45); }
-  70%  { box-shadow: 0 0 0 10px rgba(22, 163, 74, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.28); }
+  70%  { box-shadow: 0 0 0 10px rgba(255, 255, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
 }
 
 /* Children fade in sequentially. */

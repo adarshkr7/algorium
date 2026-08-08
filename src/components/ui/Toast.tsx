@@ -33,22 +33,23 @@ interface ToastApi {
 
 const ToastContext = createContext<ToastApi | null>(null);
 
+/** Same monochrome rule as Alert: full-ink text, severity in the border. */
 const TONE_STYLES: Record<ToastTone, { wrap: string; icon: React.ReactNode }> = {
   info: {
     wrap: "border-white/12 bg-elevated text-ink",
     icon: <Activity className="size-4 shrink-0 text-ink-dim" />,
   },
   success: {
-    wrap: "border-success/30 bg-success/10 text-success",
-    icon: <CheckCircle2 className="size-4 shrink-0" />,
+    wrap: "border-white/25 bg-elevated text-ink",
+    icon: <CheckCircle2 className="size-4 shrink-0 text-success" />,
   },
   warning: {
-    wrap: "border-warning/30 bg-warning/10 text-warning",
-    icon: <AlertTriangle className="size-4 shrink-0" />,
+    wrap: "border-white/30 bg-elevated text-ink",
+    icon: <AlertTriangle className="size-4 shrink-0 text-warning" />,
   },
   danger: {
-    wrap: "border-danger/30 bg-danger/10 text-danger",
-    icon: <XCircle className="size-4 shrink-0" />,
+    wrap: "border-white/45 bg-elevated text-ink",
+    icon: <XCircle className="size-4 shrink-0 text-ink" />,
   },
 };
 

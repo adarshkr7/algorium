@@ -76,7 +76,10 @@ export function VerdictBadge({
   );
 }
 
-/** Codeforces difficulty pill, coloured by rating band. */
+/**
+ * Codeforces difficulty pill. The palette is monochrome, so the rating band is
+ * expressed as contrast: the harder the problem, the louder the pill reads.
+ */
 export function RatingBadge({
   rating,
   className,
@@ -85,7 +88,7 @@ export function RatingBadge({
   className?: string;
 }) {
   const tone: BadgeTone =
-    rating >= 2100 ? "danger" : rating >= 1600 ? "warning" : "success";
+    rating >= 2100 ? "solid" : rating >= 1600 ? "brand" : "neutral";
   return (
     <Badge tone={tone} className={cn("font-mono", className)}>
       {rating}

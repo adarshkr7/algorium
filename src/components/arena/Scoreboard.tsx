@@ -106,7 +106,7 @@ function ScoreRow({
       )}
     >
       {showMedal && (
-        <span className="w-6 shrink-0 text-center text-lg">
+        <span className="mono-emoji w-6 shrink-0 text-center text-lg">
           {rank === 0 ? "🥇" : "🥈"}
         </span>
       )}

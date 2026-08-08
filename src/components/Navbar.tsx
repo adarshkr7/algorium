@@ -172,8 +172,10 @@ export const Navbar: React.FC = () => {
               alt=""
               className="size-8 rounded-full object-cover"
             />
+            {/* Two-tone wordmark: the split now reads through weight/luminance
+                rather than the old green accent. */}
             <span className="text-lg font-extrabold tracking-tight text-ink">
-              ALGO<span className="text-brand">RIUM</span>
+              ALGO<span className="font-light text-ink-dim">RIUM</span>
             </span>
           </Link>
 
