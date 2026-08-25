@@ -8,6 +8,11 @@ import {
 } from "@/lib/api-utils";
 import { ROOM_INCLUDE } from "@/lib/services/room-service";
 import { BroadcastService } from "@/lib/services/broadcast";
+import {
+  describeRequirement,
+  isCompliant,
+  mediaRequired,
+} from "@/lib/services/media-policy";
 
 /**
  * POST /api/rooms/[code]/start — host only.
@@ -31,7 +36,17 @@ export async function POST(
 
     const room = await prisma.room.findUnique({
       where: { code },
-      include: { contest: { select: { id: true, durationMinutes: true, isSolo: true } } },
+      include: {
+        contest: {
+          select: {
+            id: true,
+            durationMinutes: true,
+            isSolo: true,
+            requireVideo: true,
+            requireAudio: true,
+          },
+        },
+      },
     });
 
     if (!room || !room.contest) {
@@ -64,6 +79,38 @@ export async function POST(
         409,
         { code: "NOT_ENOUGH_PLAYERS" },
       );
+    }
+
+    // ── Camera / microphone gate ───────────────────────────────────────────
+    // The lobby disables the button, but that is a courtesy: the check has to
+    // happen here or a crafted POST starts a proctored contest with the
+    // cameras off.
+    if (mediaRequired(room.contest)) {
+      const participants = await prisma.participant.findMany({
+        where: { contestId: room.contest.id },
+        select: {
+          role: true,
+          videoOn: true,
+          audioOn: true,
+          user: { select: { handle: true } },
+        },
+      });
+
+      const notReady = participants.filter(
+        (p) => !isCompliant(room.contest!, p),
+      );
+
+      if (notReady.length > 0) {
+        const handles = notReady.map((p) => p.user.handle).join(" and ");
+        return apiError(
+          `${handles} still needs to turn their ${describeRequirement(room.contest)} on`,
+          409,
+          {
+            code: "MEDIA_NOT_READY",
+            details: { handles: notReady.map((p) => p.user.handle) },
+          },
+        );
+      }
     }
 
     const problemCount = await prisma.problem.count({

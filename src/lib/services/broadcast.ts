@@ -5,6 +5,9 @@ import {
 } from "@supabase/supabase-js";
 import type { Standings } from "./standings";
 
+/** Channel suffix for camera/microphone traffic. */
+export const MEDIA_CHANNEL_SUFFIX = "media";
+
 /** Every realtime event name the app sends, in one place. */
 export const ROOM_EVENTS = {
   submission: "new-recent-action",
@@ -17,13 +20,38 @@ export const ROOM_EVENTS = {
   roomCancelled: "room-cancelled",
   playerJoined: "player-joined",
   rematchReady: "rematch-ready",
+  mediaState: "media-state",
+  mediaViolation: "media-violation",
 } as const;
 
 export type ContestFinishReason =
   | "time_expired"
   | "all_solved"
   | "resignation"
+  | "media_violation"
   | "manual";
+
+/** One contestant's camera/microphone state, as everyone else sees it. */
+export interface MediaSnapshot {
+  userId: string;
+  handle: string;
+  role: string;
+  videoOn: boolean;
+  audioOn: boolean;
+  compliant: boolean;
+  /** ISO timestamp the current violation started, or null when compliant. */
+  violationSince: string | null;
+}
+
+export interface MediaViolationPayload {
+  userId: string;
+  handle: string;
+  /** "camera", "microphone", or both. */
+  missing: string[];
+  action: "WARN" | "FORFEIT";
+  /** True when the grace period expired and the contest was ended. */
+  enforced: boolean;
+}
 
 export interface SeriesSnapshot {
   id: string;
@@ -61,7 +89,12 @@ export class BroadcastService {
   private channel: RealtimeChannel;
   readonly channelName: string;
 
-  constructor(roomCode: string) {
+  /**
+   * `suffix` puts a stream on its own channel. Media state is chatty and the
+   * lobby already uses `room-CODE` for presence, so the two are kept apart
+   * rather than made to share one topic.
+   */
+  constructor(roomCode: string, suffix?: string) {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
@@ -73,7 +106,8 @@ export class BroadcastService {
     }
 
     this.supabase = createClient(url, key);
-    this.channelName = `room-${roomCode.toUpperCase()}`;
+    const base = `room-${roomCode.toUpperCase()}`;
+    this.channelName = suffix ? `${base}-${suffix}` : base;
     this.channel = this.supabase.channel(this.channelName);
   }
 
@@ -151,6 +185,17 @@ export class BroadcastService {
 
   async broadcastPlayerJoined(handle: string): Promise<void> {
     await this.emit(ROOM_EVENTS.playerJoined, { handle });
+  }
+
+  /** Pushes the whole media roster so every tile updates in one message. */
+  async broadcastMediaState(participants: MediaSnapshot[]): Promise<void> {
+    await this.emit(ROOM_EVENTS.mediaState, { participants });
+  }
+
+  async broadcastMediaViolation(
+    payload: MediaViolationPayload,
+  ): Promise<void> {
+    await this.emit(ROOM_EVENTS.mediaViolation, payload);
   }
 
   /** Tells the other player a rematch room exists and where to go. */

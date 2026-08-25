@@ -36,6 +36,10 @@ export const ROOM_SUMMARY_INCLUDE = {
       durationMinutes: true,
       minRating: true,
       maxRating: true,
+      // Surfaced in the open-duels list so nobody joins a proctored room
+      // without knowing their camera has to be on.
+      requireVideo: true,
+      requireAudio: true,
     },
   },
   series: { select: { bestOf: true } },

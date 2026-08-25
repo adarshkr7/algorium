@@ -61,6 +61,10 @@ export interface ArenaContest {
   endTime: string | null;
   status: string;
   isSolo: boolean;
+  requireVideo: boolean;
+  requireAudio: boolean;
+  mediaGraceSeconds: number;
+  mediaViolationAction: string;
   problems: ArenaProblem[];
   submissions: ArenaSubmission[];
   participants?: ArenaParticipant[];

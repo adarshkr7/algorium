@@ -11,6 +11,8 @@ import {
   Shield,
   Swords,
   Trophy,
+  Video,
+  VideoOff,
   Zap,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
@@ -36,15 +38,23 @@ import {
 } from "@/components/arena/ProblemPanel";
 import { ActivityFeed, Scoreboard } from "@/components/arena/Scoreboard";
 import { ResultsScreen } from "@/components/arena/ResultsScreen";
+import { MediaRail } from "@/components/arena/MediaRail";
+import { useMedia } from "@/components/arena/useMedia";
 import type { ArenaProblem } from "@/components/arena/types";
 
-type MobileTab = "problem" | "board" | "feed";
+type MobileTab = "problem" | "board" | "feed" | "video";
 
 const TABS: { id: MobileTab; label: string; icon: React.ElementType }[] = [
   { id: "problem", label: "Problem", icon: Swords },
   { id: "board", label: "Score", icon: Trophy },
   { id: "feed", label: "Activity", icon: Activity },
 ];
+
+const VIDEO_TAB: { id: MobileTab; label: string; icon: React.ElementType } = {
+  id: "video",
+  label: "Video",
+  icon: Video,
+};
 
 export default function ArenaPage({
   params,
@@ -83,6 +93,21 @@ export default function ArenaPage({
     setSelectedIndex,
     loadError,
   } = arena;
+
+  const isContestant = Boolean(
+    user && (user.id === player1?.id || user.id === player2?.id),
+  );
+
+  const media = useMedia({
+    code,
+    contestId: contest?.id ?? null,
+    requireVideo: contest?.requireVideo ?? false,
+    requireAudio: contest?.requireAudio ?? false,
+    graceSeconds: contest?.mediaGraceSeconds ?? 30,
+    userId: user?.id ?? null,
+    isContestant,
+    isFinished,
+  });
 
   const activeBlitzIndex = useMemo(
     () =>
@@ -243,8 +268,37 @@ export default function ArenaPage({
     <ActivityFeed submissions={submissions} currentUserId={user?.id} />
   );
 
+  // Reading the problems with your camera off is the thing the requirement
+  // exists to prevent, so non-compliance costs you the problem panel
+  // immediately rather than only at the end of the grace period. This is a
+  // deterrent, not a security control — the server enforces the real rule.
   const problemArea = (
-    <div className="flex flex-col gap-4">
+    <div className="relative flex flex-col gap-4">
+      {media.inViolation && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 rounded-lg bg-canvas/80 px-6 text-center backdrop-blur-md">
+          <VideoOff className="size-8 text-danger" />
+          <p className="text-sm font-bold text-ink">
+            Turn your{" "}
+            {[
+              contest.requireVideo && !media.myVideoOn && "camera",
+              contest.requireAudio && !media.myAudioOn && "microphone",
+            ]
+              .filter(Boolean)
+              .join(" and ")}{" "}
+            back on
+          </p>
+          <p className="max-w-xs text-xs leading-relaxed text-ink-dim">
+            {contest.mediaViolationAction === "FORFEIT"
+              ? "The problems are hidden until it is. You forfeit if it stays off."
+              : "The problems are hidden until it is. Your opponent and the log both see this."}
+          </p>
+          {media.graceRemaining !== null && (
+            <p className="font-mono text-3xl font-extrabold tabular-nums text-danger">
+              {media.graceRemaining}s
+            </p>
+          )}
+        </div>
+      )}
       <ProblemPills
         problems={problems}
         selectedIndex={selectedIndex}
@@ -370,24 +424,59 @@ export default function ArenaPage({
         </Alert>
       )}
 
+      {media.lastViolation && (
+        <Alert tone="danger" shake>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>
+              {media.lastViolation.isMe
+                ? "Your"
+                : `${media.lastViolation.handle}'s`}{" "}
+              {media.lastViolation.missing.join(" and ")}{" "}
+              {media.lastViolation.missing.length > 1 ? "were" : "was"} off past
+              the grace period.
+              {media.lastViolation.action === "FORFEIT"
+                ? " The duel was forfeited."
+                : " It has been logged."}
+            </span>
+            <button
+              type="button"
+              onClick={media.dismissViolation}
+              className="cursor-pointer text-[0.72rem] font-bold tracking-wide text-ink-dim underline underline-offset-2 hover:text-ink"
+            >
+              Dismiss
+            </button>
+          </span>
+        </Alert>
+      )}
+
       {/* ── Mobile tabs ───────────────────────────────────────────────────── */}
-      <div className="panel grid grid-cols-3 gap-1 rounded-full p-1 lg:hidden">
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={cn(
-              "flex cursor-pointer items-center justify-center gap-1.5 rounded-full border-0 py-2.5 text-[0.78rem] font-bold transition-colors",
-              tab === id
-                ? "bg-ink text-ink-invert"
-                : "bg-transparent text-ink-dim",
-            )}
-          >
-            <Icon className="size-3.5" />
-            {label}
-          </button>
-        ))}
+      <div
+        className={cn(
+          "panel grid gap-1 rounded-full p-1 lg:hidden",
+          media.enabled ? "grid-cols-4" : "grid-cols-3",
+        )}
+      >
+        {(media.enabled ? [...TABS, VIDEO_TAB] : TABS).map(
+          ({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={cn(
+                "flex cursor-pointer items-center justify-center gap-1.5 rounded-full border-0 py-2.5 text-[0.78rem] font-bold transition-colors",
+                tab === id
+                  ? "bg-ink text-ink-invert"
+                  : "bg-transparent text-ink-dim",
+                // A red dot beats a label nobody is looking at when the reason
+                // the problems just vanished is on another tab.
+                id === "video" && media.inViolation && "text-danger",
+              )}
+            >
+              <Icon className="size-3.5" />
+              {label}
+            </button>
+          ),
+        )}
       </div>
 
       {/* ── Content ───────────────────────────────────────────────────────── */}
@@ -398,6 +487,17 @@ export default function ArenaPage({
         </div>
 
         <div className="flex flex-col gap-5">
+          {media.enabled && (
+            <div
+              className={cn(tab === "video" ? "block" : "hidden", "lg:block")}
+            >
+              <MediaRail
+                media={media}
+                requireVideo={contest.requireVideo}
+                requireAudio={contest.requireAudio}
+              />
+            </div>
+          )}
           <div className={cn(tab === "board" ? "block" : "hidden", "lg:block")}>
             {scoreboard}
           </div>

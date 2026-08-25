@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   Clock,
+  Mic,
   Radio,
   Shield,
   Swords,
   Target,
   Users,
+  Video,
   Zap,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
@@ -41,6 +43,8 @@ interface PublicRoom {
     durationMinutes: number;
     minRating: number;
     maxRating: number;
+    requireVideo: boolean;
+    requireAudio: boolean;
   } | null;
   series: { bestOf: number } | null;
 }
@@ -304,6 +308,18 @@ export default function HomePage() {
                   </Badge>
                   {room.series && room.series.bestOf > 1 && (
                     <Badge tone="warning">Best of {room.series.bestOf}</Badge>
+                  )}
+                  {/* Nobody should discover a proctored room only after
+                      joining it. */}
+                  {room.contest?.requireVideo && (
+                    <Badge tone="warning" icon={<Video className="size-3" />}>
+                      Camera on
+                    </Badge>
+                  )}
+                  {room.contest?.requireAudio && (
+                    <Badge tone="warning" icon={<Mic className="size-3" />}>
+                      Mic on
+                    </Badge>
                   )}
                 </div>
 
