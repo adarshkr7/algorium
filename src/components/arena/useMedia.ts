@@ -137,6 +137,20 @@ export function useMedia(args: {
   const reportedRef = useRef<string | null>(null);
   const violationStartedRef = useRef<number | null>(null);
   const escalatedRef = useRef(false);
+  /** When each other contestant first looked non-compliant, by user id. */
+  const suspectSinceRef = useRef<Map<string, number>>(new Map());
+  /** Remote contestants seen at least once, so a vanished one is noticed. */
+  const seenRemotesRef = useRef<Set<string>>(new Set());
+  /** Incidents already reported, keyed by user id and start time. */
+  const reportedIncidentsRef = useRef<Set<string>>(new Set());
+  const rosterRef = useRef(roster);
+  const remotesRef = useRef(remotes);
+  useEffect(() => {
+    rosterRef.current = roster;
+  }, [roster]);
+  useEffect(() => {
+    remotesRef.current = remotes;
+  }, [remotes]);
 
   const localVideoRef = useCallback((el: HTMLVideoElement | null) => {
     localVideoElRef.current = el;
@@ -402,6 +416,48 @@ export function useMedia(args: {
     return () => clearInterval(id);
   }, [inViolation, graceSeconds, code]);
 
+  // ── Watching the other side ──────────────────────────────────────────────
+  // The offender's own countdown above dies with their browser tab, which is
+  // exactly how someone would dodge it, and the worker sweep that would
+  // otherwise catch that has nowhere to run on a serverless deployment.
+  //
+  // So anyone still watching pokes the server instead. The endpoint takes no
+  // body: this says "re-check this room", never "that player is cheating".
+  // The server re-derives the truth from LiveKit and the database, so a
+  // liberal client costs nothing when the room is fine and closes the gap when
+  // it is not. Supervisors report too — watching is their whole job.
+  useEffect(() => {
+    if (!enabled || !userId || isFinished) return;
+
+    const tick = () => {
+      const due = collectReportableSuspects({
+        now: Date.now(),
+        userId,
+        roster: rosterRef.current,
+        remotes: remotesRef.current,
+        seen: seenRemotesRef.current,
+        suspectSince: suspectSinceRef.current,
+        reported: reportedIncidentsRef.current,
+        requireVideo,
+        requireAudio,
+        graceMs: graceSeconds * 1000,
+      });
+
+      for (const { key } of due) {
+        void apiFetch(`/api/rooms/${code}/media/violation`, {
+          method: "POST",
+          body: {},
+        }).catch(() => {
+          // Let a later tick retry rather than swallowing the incident.
+          reportedIncidentsRef.current.delete(key);
+        });
+      }
+    };
+
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [enabled, userId, code, graceSeconds, requireVideo, requireAudio, isFinished]);
+
   // ── Assemble the tiles ───────────────────────────────────────────────────
   const tiles = useMemo<MediaTile[]>(() => {
     if (!enabled || !userId) return [];
@@ -480,4 +536,108 @@ function isPublishing(participant: LKParticipant, source: Track.Source): boolean
   const pub: TrackPublication | undefined =
     participant.getTrackPublication(source);
   return Boolean(pub && pub.isSubscribed !== false && !pub.isMuted);
+}
+
+/** A remote contestant as this browser currently sees them. */
+interface ObservedRemote {
+  userId: string;
+  videoOn: boolean;
+  audioOn: boolean;
+}
+
+export interface ReportableSuspect {
+  userId: string;
+  /** Stable per incident, so the same lapse is only reported once. */
+  key: string;
+}
+
+/**
+ * Decides which other contestants are worth asking the server to re-check.
+ *
+ * Pure apart from the two collections it maintains across ticks, which are
+ * passed in so this can be exercised directly. `seen`, `suspectSince` and
+ * `reported` are mutated deliberately: they are the caller's refs.
+ *
+ * Three independent signals feed it, because each covers a hole in the others:
+ *   1. the roster the server broadcast — the only one that sees a closed tab,
+ *      via the media webhook;
+ *   2. what this browser observes over LiveKit — works when no webhook is
+ *      configured and the roster therefore never moves;
+ *   3. a participant who was here and is now gone — publishing nothing.
+ */
+export function collectReportableSuspects(args: {
+  now: number;
+  userId: string;
+  roster: Record<string, MediaSnapshot>;
+  remotes: ObservedRemote[];
+  seen: Set<string>;
+  suspectSince: Map<string, number>;
+  reported: Set<string>;
+  requireVideo: boolean;
+  requireAudio: boolean;
+  graceMs: number;
+}): ReportableSuspect[] {
+  const {
+    now,
+    userId,
+    roster,
+    remotes,
+    seen,
+    suspectSince,
+    reported,
+    requireVideo,
+    requireAudio,
+    graceMs,
+  } = args;
+
+  const suspects = new Set<string>();
+
+  for (const snapshot of Object.values(roster)) {
+    if (snapshot.userId === userId) continue;
+    if (snapshot.role === "SUPERVISOR") continue;
+    if (!snapshot.compliant) suspects.add(snapshot.userId);
+  }
+
+  for (const remote of remotes) {
+    seen.add(remote.userId);
+    if (
+      (requireVideo && !remote.videoOn) ||
+      (requireAudio && !remote.audioOn)
+    ) {
+      suspects.add(remote.userId);
+    }
+  }
+
+  const present = new Set(remotes.map((r) => r.userId));
+  for (const id of seen) {
+    // Only counts once the roster has confirmed they belong here, so a
+    // participant who simply has not connected yet is not treated as absent.
+    if (!present.has(id) && roster[id]) suspects.add(id);
+  }
+
+  // Anyone who recovered gets a fresh clock next time they slip.
+  for (const id of [...suspectSince.keys()]) {
+    if (!suspects.has(id)) suspectSince.delete(id);
+  }
+
+  const due: ReportableSuspect[] = [];
+
+  for (const id of suspects) {
+    if (!suspectSince.has(id)) {
+      suspectSince.set(id, now);
+      continue;
+    }
+    const since = suspectSince.get(id)!;
+    if (now - since < graceMs) continue;
+
+    // Both players may report the same lapse; the server's optimistic lock
+    // makes the duplicate a no-op, but there is no reason to send it twice
+    // from one browser.
+    const key = `${id}:${since}`;
+    if (reported.has(key)) continue;
+    reported.add(key);
+    due.push({ userId: id, key });
+  }
+
+  return due;
 }

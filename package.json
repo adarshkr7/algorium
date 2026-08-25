@@ -12,6 +12,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test:media": "tsx src/components/arena/useMedia.test.mts",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "postinstall": "prisma generate"
