@@ -44,6 +44,7 @@ import {
   useToast,
   VerdictBadge,
 } from "@/components/ui";
+import { ComplianceSummary } from "./ComplianceSummary";
 import type {
   ArenaContest,
   ArenaPlayer,
@@ -196,6 +197,11 @@ export function ResultsScreen({
         {winnerInfo?.reason === "resignation" && (
           <p className="mt-2 text-sm text-ink-dim">Ended by resignation.</p>
         )}
+        {winnerInfo?.reason === "media_violation" && (
+          <p className="mt-2 text-sm text-danger">
+            Ended by forfeit — a required camera or microphone stayed off.
+          </p>
+        )}
         {winnerInfo?.reason === "time_expired" && (
           <p className="mt-2 text-sm text-ink-dim">Time ran out.</p>
         )}
@@ -294,6 +300,15 @@ export function ResultsScreen({
           })}
         </div>
       </section>
+
+      <ComplianceSummary
+        code={code}
+        requireVideo={contest.requireVideo}
+        requireAudio={contest.requireAudio}
+        player1={player1}
+        player2={player2}
+        contestEndedAt={contest.endTime}
+      />
 
       {/* ── Problem breakdown ─────────────────────────────────────────────── */}
       <section className="flex flex-col gap-3">

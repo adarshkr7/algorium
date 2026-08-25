@@ -3,6 +3,7 @@ import {
   evaluateContest,
   EVALUATION_INCLUDE,
 } from "../lib/services/contest-evaluator";
+import { sweepMediaCompliance } from "../lib/services/media-enforcer";
 
 /**
  * Background engine that keeps live contests in sync with Codeforces.
@@ -52,18 +53,38 @@ async function tick(): Promise<number> {
   return activeContests.length;
 }
 
+/**
+ * Enforcement of host-mandated cameras and microphones.
+ *
+ * Deliberately outside `tick`'s try/catch and not gated on there being any
+ * Codeforces work to do: a contest where nobody has submitted anything is
+ * exactly the one where somebody might quietly close their camera.
+ */
+async function mediaTick(): Promise<number> {
+  try {
+    return await sweepMediaCompliance();
+  } catch (error) {
+    console.error("[arena-evaluator] media sweep failed:", error);
+    return 0;
+  }
+}
+
 async function run(): Promise<void> {
   console.log("[arena-evaluator] started");
 
   while (running) {
     let activeCount = 0;
+    let mediaCount = 0;
     try {
       activeCount = await tick();
     } catch (error) {
       console.error("[arena-evaluator] loop error:", error);
     }
+    mediaCount = await mediaTick();
+
     // Back off when nothing is live so an idle instance is not hammering the DB.
-    await sleep(activeCount > 0 ? POLL_INTERVAL_MS : IDLE_INTERVAL_MS);
+    const busy = activeCount > 0 || mediaCount > 0;
+    await sleep(busy ? POLL_INTERVAL_MS : IDLE_INTERVAL_MS);
   }
 
   await prisma.$disconnect();

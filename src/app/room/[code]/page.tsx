@@ -7,11 +7,15 @@ import {
   Copy,
   Eye,
   LogOut,
+  Mic,
+  MicOff,
   Play,
   Share2,
   Swords,
   UserRound,
   Users,
+  Video,
+  VideoOff,
 } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import { createClient } from "@/utils/supabase/client";
@@ -29,6 +33,7 @@ import {
   LoadingScreen,
   useToast,
 } from "@/components/ui";
+import { MediaCheck, type MediaCheckState } from "@/components/room/MediaCheck";
 
 interface RoomPlayer {
   id: string;
@@ -68,7 +73,20 @@ interface RoomState {
     minRating: number;
     maxRating: number;
     isSolo: boolean;
+    requireVideo: boolean;
+    requireAudio: boolean;
+    mediaGraceSeconds: number;
+    mediaViolationAction: string;
   } | null;
+}
+
+/** What each participant's presence entry carries. */
+interface RoomPresence {
+  userId: string;
+  handle: string;
+  videoOn: boolean;
+  audioOn: boolean;
+  mediaReady: boolean;
 }
 
 const POLL_MS = 5_000;
@@ -93,10 +111,21 @@ export default function RoomLobbyPage({
   const [starting, setStarting] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [leaving, setLeaving] = useState(false);
-  const [presentIds, setPresentIds] = useState<string[]>([]);
+  const [presence, setPresence] = useState<Record<string, RoomPresence>>({});
+  const [myMedia, setMyMedia] = useState<MediaCheckState>({
+    videoOn: false,
+    audioOn: false,
+    ready: false,
+  });
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const joinAttempted = useRef(false);
+  /** Last state pushed to the server, so device flapping isn't chatty. */
+  const reportedMedia = useRef<string | null>(null);
+  const myMediaRef = useRef(myMedia);
+  useEffect(() => {
+    myMediaRef.current = myMedia;
+  }, [myMedia]);
 
   // ── Load + auto-join ─────────────────────────────────────────────────────
   const loadRoom = useCallback(async () => {
@@ -168,12 +197,19 @@ export default function RoomLobbyPage({
 
     channel
       .on("presence", { event: "sync" }, () => {
-        const state = channel.presenceState<{ userId?: string }>();
-        const ids = Object.values(state)
-          .flat()
-          .map((p) => p.userId)
-          .filter((id): id is string => Boolean(id));
-        setPresentIds(ids);
+        const state = channel.presenceState<Partial<RoomPresence>>();
+        const next: Record<string, RoomPresence> = {};
+        for (const entry of Object.values(state).flat()) {
+          if (!entry.userId) continue;
+          next[entry.userId] = {
+            userId: entry.userId,
+            handle: entry.handle ?? "",
+            videoOn: entry.videoOn ?? false,
+            audioOn: entry.audioOn ?? false,
+            mediaReady: entry.mediaReady ?? false,
+          };
+        }
+        setPresence(next);
       })
       .on("broadcast", { event: "contest-started" }, () => {
         router.replace(`/arena/${code}`);
@@ -188,7 +224,12 @@ export default function RoomLobbyPage({
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED" && user) {
-          await channel.track({ userId: user.id, handle: user.handle });
+          await channel.track({
+            userId: user.id,
+            handle: user.handle,
+            ...myMediaRef.current,
+            mediaReady: myMediaRef.current.ready,
+          });
         }
       });
 
@@ -197,6 +238,40 @@ export default function RoomLobbyPage({
       void supabase.removeChannel(channel);
     };
   }, [code, supabase, user, router, loadRoom, sessionLoading, toast]);
+
+  // ── Publish device state ─────────────────────────────────────────────────
+  // Presence is what the other player's lobby renders; the POST is what the
+  // server's start guard reads. Both are needed — presence is instant but
+  // client-only, the database row is authoritative but polled.
+  const mediaEnforced = Boolean(
+    room?.contest?.requireVideo || room?.contest?.requireAudio,
+  );
+
+  useEffect(() => {
+    if (!user || !mediaEnforced) return;
+
+    void channelRef.current?.track({
+      userId: user.id,
+      handle: user.handle,
+      videoOn: myMedia.videoOn,
+      audioOn: myMedia.audioOn,
+      mediaReady: myMedia.ready,
+    });
+
+    const fingerprint = `${myMedia.videoOn}:${myMedia.audioOn}`;
+    if (reportedMedia.current === fingerprint) return;
+    reportedMedia.current = fingerprint;
+
+    void apiFetch(`/api/rooms/${code}/media/state`, {
+      method: "POST",
+      body: { videoOn: myMedia.videoOn, audioOn: myMedia.audioOn },
+    })
+      .then(() => void loadRoom())
+      .catch(() => {
+        // Let the next change retry rather than wedging on a transient failure.
+        reportedMedia.current = null;
+      });
+  }, [myMedia, user, code, mediaEnforced, loadRoom]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
   const copy = async (kind: "code" | "link") => {
@@ -261,8 +336,38 @@ export default function RoomLobbyPage({
   const player1 = isSupervised ? room.player1 : room.host;
   const player2 = isSupervised ? room.player2 : room.guest;
 
-  const canStart = isHost && (isSolo || Boolean(player1 && player2));
   const series = room.series;
+
+  // ── Camera / microphone gate ─────────────────────────────────────────────
+  const requireVideo = contest.requireVideo;
+  const requireAudio = contest.requireAudio;
+  const needed = [requireVideo && "camera", requireAudio && "microphone"]
+    .filter(Boolean)
+    .join(" and ");
+
+  // Contestants only. A supervisor watches, so their own devices are theirs.
+  const isContestant = Boolean(
+    user && (user.id === player1?.id || user.id === player2?.id),
+  );
+
+  const mediaOkFor = (p: RoomPlayer | null) => {
+    if (!mediaEnforced || !p) return true;
+    const state = presence[p.id];
+    if (!state) return false;
+    return (!requireVideo || state.videoOn) && (!requireAudio || state.audioOn);
+  };
+
+  const bothSeated = isSolo || Boolean(player1 && player2);
+  const mediaGateOpen =
+    !mediaEnforced || (mediaOkFor(player1) && mediaOkFor(player2));
+
+  const canStart = isHost && bothSeated && mediaGateOpen;
+
+  const waitingOn = !bothSeated
+    ? isSupervised
+      ? "Waiting for two players…"
+      : "Waiting for an opponent…"
+    : `Waiting for ${needed} to come on…`;
 
   const startLabel = starting
     ? "Starting…"
@@ -270,9 +375,7 @@ export default function RoomLobbyPage({
       ? isSolo
         ? "Start practice"
         : "Start contest"
-      : isSupervised
-        ? "Waiting for two players…"
-        : "Waiting for an opponent…";
+      : waitingOn;
 
   return (
     <div className="flex flex-col gap-7">
@@ -351,6 +454,18 @@ export default function RoomLobbyPage({
             label="Rating"
             value={`${contest.minRating}–${contest.maxRating}`}
           />
+          {mediaEnforced && (
+            <DataPoint
+              label="Required"
+              value={
+                requireVideo && requireAudio
+                  ? "Cam + mic"
+                  : requireVideo
+                    ? "Camera"
+                    : "Mic"
+              }
+            />
+          )}
         </div>
       </Card>
 
@@ -359,6 +474,27 @@ export default function RoomLobbyPage({
           This room is listed in open duels — anyone can join it from the home
           page.
         </Alert>
+      )}
+
+      {mediaEnforced && (
+        <Card>
+          {isContestant ? (
+            <MediaCheck
+              requireVideo={requireVideo}
+              requireAudio={requireAudio}
+              onChange={setMyMedia}
+            />
+          ) : (
+            <Alert tone="info">
+              <span className="flex items-center gap-2">
+                <Video className="size-4 shrink-0" />
+                {isSupervised && isHost
+                  ? `Both contestants must share their ${needed} before you can start. Yours stays off.`
+                  : `Contestants in this room share their ${needed}.`}
+              </span>
+            </Alert>
+          )}
+        </Card>
       )}
 
       {/* ── Players ───────────────────────────────────────────────────────── */}
@@ -375,15 +511,21 @@ export default function RoomLobbyPage({
         <PlayerSlot
           player={player1}
           role={isSupervised ? "Player 1" : "Host"}
-          online={player1 ? presentIds.includes(player1.id) : false}
+          online={player1 ? Boolean(presence[player1.id]) : false}
           isYou={player1?.id === user?.id}
+          media={player1 ? presence[player1.id] : undefined}
+          requireVideo={mediaEnforced && requireVideo}
+          requireAudio={mediaEnforced && requireAudio}
         />
         {!isSolo && (
           <PlayerSlot
             player={player2}
             role={isSupervised ? "Player 2" : "Challenger"}
-            online={player2 ? presentIds.includes(player2.id) : false}
+            online={player2 ? Boolean(presence[player2.id]) : false}
             isYou={player2?.id === user?.id}
+            media={player2 ? presence[player2.id] : undefined}
+            requireVideo={mediaEnforced && requireVideo}
+            requireAudio={mediaEnforced && requireAudio}
           />
         )}
       </section>
@@ -435,11 +577,17 @@ function PlayerSlot({
   role,
   online,
   isYou,
+  media,
+  requireVideo,
+  requireAudio,
 }: {
   player: RoomPlayer | null;
   role: string;
   online: boolean;
   isYou: boolean;
+  media?: RoomPresence;
+  requireVideo?: boolean;
+  requireAudio?: boolean;
 }) {
   return (
     <div className="flex items-center gap-4 border-b border-white/6 py-5 sm:gap-6 sm:py-6">
@@ -461,6 +609,12 @@ function PlayerSlot({
                 )}
               />
               {isYou && <Badge tone="solid">You</Badge>}
+              {requireVideo && (
+                <MediaPip on={Boolean(media?.videoOn)} kind="video" />
+              )}
+              {requireAudio && (
+                <MediaPip on={Boolean(media?.audioOn)} kind="audio" />
+              )}
             </div>
             <p className="text-eyebrow mt-1.5 flex flex-wrap gap-x-3 text-ink-faint">
               <span>{role}</span>
@@ -490,5 +644,26 @@ function PlayerSlot({
         </>
       )}
     </div>
+  );
+}
+
+/** A camera/mic status dot next to a player's handle in the lobby. */
+function MediaPip({ on, kind }: { on: boolean; kind: "video" | "audio" }) {
+  const Icon =
+    kind === "video" ? (on ? Video : VideoOff) : on ? Mic : MicOff;
+  const label = kind === "video" ? "Camera" : "Microphone";
+  return (
+    <span
+      title={`${label} ${on ? "on" : "off"}`}
+      className={cn(
+        "flex size-6 shrink-0 items-center justify-center rounded-full border",
+        on
+          ? "border-success/30 bg-success/10 text-success"
+          : "border-danger/30 bg-danger/10 text-danger",
+      )}
+    >
+      <Icon className="size-3.5" />
+      <span className="sr-only">{`${label} ${on ? "on" : "off"}`}</span>
+    </span>
   );
 }

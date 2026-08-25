@@ -44,6 +44,7 @@ export const CONTEST_MODES = ["BLITZ", "CLASSIC", "LOCKOUT"] as const;
 export const POINTING_SYSTEMS = ["ICPC", "POINTS"] as const;
 export const HOSTING_TYPES = ["PLAYER_HOST", "SUPERVISED"] as const;
 export const TAG_MATCH_MODES = ["ANY", "ALL"] as const;
+export const MEDIA_VIOLATION_ACTIONS = ["WARN", "FORFEIT"] as const;
 
 export const MIN_PROBLEMS = 1;
 export const MAX_PROBLEMS = 8;
@@ -51,6 +52,11 @@ export const MIN_DURATION = 5;
 export const MAX_DURATION = 300;
 export const MIN_CF_RATING = 800;
 export const MAX_CF_RATING = 3500;
+// Long enough to survive a browser reconnect or a device being unplugged,
+// short enough that walking away is still caught.
+export const MIN_MEDIA_GRACE = 10;
+export const MAX_MEDIA_GRACE = 300;
+export const DEFAULT_MEDIA_GRACE = 30;
 
 const tagList = z
   .array(z.string().trim().min(1).max(40))
@@ -99,6 +105,15 @@ export const CreateContestSchema = z
     excludedTags: tagList,
     tagMatchMode: z.enum(TAG_MATCH_MODES).default("ANY"),
     seed: z.string().trim().max(64).default(""),
+    requireVideo: z.boolean().default(false),
+    requireAudio: z.boolean().default(false),
+    mediaGraceSeconds: z.coerce
+      .number()
+      .int()
+      .min(MIN_MEDIA_GRACE, `Grace period must be at least ${MIN_MEDIA_GRACE}s`)
+      .max(MAX_MEDIA_GRACE, `Grace period must be at most ${MAX_MEDIA_GRACE}s`)
+      .default(DEFAULT_MEDIA_GRACE),
+    mediaViolationAction: z.enum(MEDIA_VIOLATION_ACTIONS).default("WARN"),
     isPublic: z.boolean().default(false),
     isSolo: z.boolean().default(false),
     bestOf: z.union([z.literal(1), z.literal(3), z.literal(5)]).default(1),
@@ -118,6 +133,10 @@ export const CreateContestSchema = z
   .refine((v) => !(v.bestOf > 1 && v.hostingType === "SUPERVISED"), {
     message: "Best-of series are only available when the host plays",
     path: ["bestOf"],
+  })
+  .refine((v) => !(v.isSolo && (v.requireVideo || v.requireAudio)), {
+    message: "A practice run has nobody to show your camera or mic to",
+    path: ["requireVideo"],
   });
 
 export type CreateContestInput = z.infer<typeof CreateContestSchema>;
@@ -185,6 +204,16 @@ export const ContactSchema = z.object({
     .trim()
     .min(10, "Please write at least 10 characters")
     .max(4000, "Message is too long"),
+});
+
+/**
+ * A participant reporting the state of their own devices. Self-reported and
+ * therefore only as trustworthy as the client — the media provider's own view
+ * of published tracks is the authority once that lands.
+ */
+export const MediaStateSchema = z.object({
+  videoOn: z.boolean(),
+  audioOn: z.boolean(),
 });
 
 export const RematchSchema = z.object({

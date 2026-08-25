@@ -65,6 +65,15 @@ enum TagMatchMode {
   ALL
 }
 
+/// What happens when a contestant lets a host-mandated camera or microphone
+/// stay off past the grace period.
+/// WARN    = everyone is told, the incident is logged, the contest carries on.
+/// FORFEIT = the offender is resigned automatically.
+enum MediaViolationAction {
+  WARN
+  FORFEIT
+}
+
 enum SeriesStatus {
   IN_PROGRESS
   FINISHED
@@ -125,7 +134,7 @@ model Room {
   createdAt   DateTime    @default(now())
 
   /// Listed in the public lobby so anyone can join without a code.
-  isPublic Boolean @default(false)
+  isPublic      Boolean @default(false)
   /// Code of the room this one was created from via "Rematch".
   rematchOfCode String?
 
@@ -171,10 +180,20 @@ model Contest {
   /// Solo practice run: no opponent, no rating change, no match history.
   isSolo       Boolean      @default(false)
 
+  /// The host requires every contestant's camera to stay on for the whole
+  /// contest. Supervisors are exempt — they watch rather than compete.
+  requireVideo         Boolean              @default(false)
+  /// Same, for the microphone.
+  requireAudio         Boolean              @default(false)
+  /// How long a required device may be off before the violation escalates.
+  mediaGraceSeconds    Int                  @default(30)
+  mediaViolationAction MediaViolationAction @default(WARN)
+
   room         Room          @relation(fields: [roomId], references: [id], onDelete: Cascade)
   problems     Problem[]
   participants Participant[]
   submissions  Submission[]
+  mediaEvents  MediaEvent[]
 
   @@index([status])
 }
@@ -207,12 +226,26 @@ model Participant {
   isWinner      Boolean         @default(false)
   hasResigned   Boolean         @default(false)
 
+  /// Last state this participant reported for their own devices. Only
+  /// meaningful while the contest requires them.
+  videoOn             Boolean   @default(false)
+  audioOn             Boolean   @default(false)
+  /// First time they were seen publishing. Null = never connected.
+  mediaJoinedAt       DateTime?
+  /// When the current violation started. Null means currently compliant, so
+  /// the worker sweep can find offenders with a single indexed lookup.
+  violationSince      DateTime?
+  mediaViolationCount Int       @default(0)
+
   contest Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id])
 
   /// One participant row per user per contest — prevents duplicate joins.
   @@unique([contestId, userId])
   @@index([userId])
+  /// The enforcement sweep looks for open violations across every live
+  /// contest at once, so it needs to find them without a table scan.
+  @@index([violationSince])
 }
 
 model Submission {
@@ -279,6 +312,26 @@ model MatchSeries {
 
   @@index([player1Id])
   @@index([player2Id])
+}
+
+/// Audit trail of camera/microphone activity in a media-required contest.
+/// Drives the supervisor's live view and the post-match compliance summary.
+model MediaEvent {
+  id        String   @id @default(uuid())
+  contestId String
+  userId    String
+  /// VIDEO_ON | VIDEO_OFF | AUDIO_ON | AUDIO_OFF | JOINED | LEFT | WARNED | FORFEITED
+  kind      String
+  /// "client" (self-reported) or "server" (worker sweep / media webhook).
+  /// Worth keeping — a self-reported event is weaker evidence than a
+  /// server-observed one, and the results screen says so.
+  source    String
+  at        DateTime @default(now())
+
+  contest Contest @relation(fields: [contestId], references: [id], onDelete: Cascade)
+
+  @@index([contestId, at])
+  @@index([contestId, userId])
 }
 
 model ContactMessage {

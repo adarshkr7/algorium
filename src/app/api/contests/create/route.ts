@@ -105,6 +105,12 @@ export async function POST(req: Request) {
     const isSupervised = body.hostingType === "SUPERVISED";
     const isSolo = body.isSolo && !isSupervised;
 
+    // A practice run has no audience, so the toggles are meaningless there.
+    // The schema already rejects the combination; this keeps the stored row
+    // consistent if `isSolo` was forced on by the supervised check above.
+    const requireVideo = body.requireVideo && !isSolo;
+    const requireAudio = body.requireAudio && !isSolo;
+
     // ── Optional best-of series ────────────────────────────────────────────
     let seriesId: string | null = null;
     if (body.bestOf > 1 && !isSolo && !isSupervised) {
@@ -140,6 +146,10 @@ export async function POST(req: Request) {
             excludedTags: body.excludedTags,
             tagMatchMode: body.tagMatchMode,
             isSolo,
+            requireVideo,
+            requireAudio,
+            mediaGraceSeconds: body.mediaGraceSeconds,
+            mediaViolationAction: body.mediaViolationAction,
             seed: body.seed || code,
             status: "NOT_STARTED",
             problems: {

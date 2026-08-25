@@ -18,6 +18,7 @@ Tailwind CSS v4.
 - [How a duel works](#how-a-duel-works)
 - [Game modes and scoring](#game-modes-and-scoring)
 - [Room formats](#room-formats)
+- [Proctoring: required camera and microphone](#proctoring-required-camera-and-microphone)
 - [Series and rematches](#series-and-rematches)
 - [Elo ladder](#elo-ladder)
 - [Architecture](#architecture)
@@ -52,7 +53,7 @@ Open <http://localhost:3000>.
 | ----------------------- | ------------------------------------------------------------------------- |
 | `npm run dev`           | Next.js dev server only                                                   |
 | `npm run dev:all`       | Dev server plus both background workers (what you normally want)          |
-| `npm run worker:eval`   | Polls live contests, ingests verdicts, finalises finished contests        |
+| `npm run worker:eval`   | Polls live contests, ingests verdicts, enforces camera rules, finalises   |
 | `npm run worker:cache`  | Warms the Redis cache of each player's solved problems                    |
 | `npm run start:workers` | Both workers without the dev server, for a separate process in production |
 | `npm run build`         | Production build                                                          |
@@ -81,6 +82,8 @@ matter most:
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | yes               | Supabase anon/publishable key                           |
 | `JWT_SECRET`                           | yes in production | Session signing key, minimum 32 characters              |
 | `EMAIL_USER` / `EMAIL_PASS`            | optional          | Gmail address and app password for password-reset codes |
+| `LIVEKIT_URL` / `_API_KEY` / `_API_SECRET` | optional      | Carries video in proctored rooms                        |
+| `NEXT_PUBLIC_LIVEKIT_URL`              | optional          | Same URL, exposed to the browser                        |
 | `REDIS_URL`                            | optional          | Defaults to `redis://localhost:6379`                    |
 
 ### JWT_SECRET
@@ -103,6 +106,23 @@ Redis caches the set of problems each player has already solved, so generating a
 contest does not have to wait on the Codeforces API. It is genuinely optional:
 every helper degrades to a cache miss when Redis is unreachable, and the only
 symptom is slower room creation plus a single warning line at startup.
+
+### LiveKit
+
+Only needed if hosts will require a camera or microphone. Create a project at
+[cloud.livekit.io](https://cloud.livekit.io), copy the URL, API key and secret,
+and point a webhook at `https://<your-domain>/api/media/webhook`.
+
+The webhook is not decoration. It is how the server learns that a camera was
+switched off by someone who has no interest in reporting it, and it is verified
+against the same API key and secret — an unsigned request is rejected, because
+otherwise anyone could mark any player compliant.
+
+Without LiveKit the feature still runs: the lobby check, the requirement and the
+enforcement sweep all work off device state reported by each browser. What you
+lose is players seeing each other, and the ability to catch a camera that is
+published but muted. Treat it as optional-but-recommended rather than truly
+optional if the rooms matter.
 
 ---
 
@@ -176,6 +196,58 @@ problem set.
 
 ---
 
+## Proctoring: required camera and microphone
+
+A host can require contestants to keep their camera on, their microphone on, or
+both, for the whole duel. Configure it on the create screen; the requirement is
+shown as a badge in the open-duels list so nobody joins a proctored room without
+knowing.
+
+**What it is.** Presence and accountability. A camera shows who is at the
+keyboard. It cannot see a second device off to the side, and it is not evidence
+of how a problem was solved — the results screen says as much. Treat it as
+raising the cost of cheating, not as closing the hole.
+
+### How it behaves
+
+| Stage | Behaviour |
+| ----- | --------- |
+| **Lobby** | Each contestant runs a device check. The host cannot start until every contestant's required devices are live — enforced in `/api/rooms/[code]/start`, not just by a disabled button. |
+| **In contest** | Tiles appear beside the scoreboard, and as a fourth tab on mobile. If one of your required devices goes off, the problem panel is covered and a countdown starts. |
+| **Grace period** | 10–300 seconds, default 30. Long enough to survive a reconnect or an unplugged webcam; short enough that walking away is caught. |
+| **Expiry** | `WARN` announces and logs the incident and the duel continues. `FORFEIT` resigns the offender, awarding the win exactly as a manual resignation does. |
+| **After** | The results screen shows total time off and incident count per player, from the `MediaEvent` log. |
+
+Supervisors are exempt — they proctor rather than compete, so their own camera
+stays their business. Practice runs cannot require media at all; there is nobody
+on the other side.
+
+### Where enforcement actually happens
+
+The countdown in the arena is a courtesy: it lives in the offender's browser, so
+closing the tab kills it. The rule is enforced by a sweep in the background
+worker, on the same tick as the Codeforces evaluation, which reads three
+sources in order of authority:
+
+1. **LiveKit's view** of published, unmuted tracks. The only source that catches
+   a camera which is published but muted — LiveKit fires no webhook for a mute,
+   because the track stays published.
+2. **The webhook**, for the fast path: unpublishing a track or closing the tab
+   arrives within a second.
+3. **Self-reported state**, when LiveKit is not configured or briefly
+   unreachable.
+
+`/api/rooms/[code]/media/violation` takes no body on purpose. A client can ask
+for the room to be re-checked; it never gets to say who is in violation. That
+keeps a modified client from framing an opponent, and staying silent buys
+nothing, since the worker reaches the same conclusion within a tick.
+
+**Not included:** recording. Nothing is stored, and the device check says so.
+Adding it would mean storage, consent and retention decisions that this feature
+deliberately does not make.
+
+---
+
 ## Series and rematches
 
 Player-hosted rooms can be a **best of three or five**. Each game is its own
@@ -245,6 +317,12 @@ frozen page.
 `src/lib/validation.ts` before it reaches Prisma, and responses are normalised
 through `apiSuccess` / `apiError`, which also serialises `BigInt` columns.
 
+**Proctoring degrades rather than fails.** `media-policy.ts` holds the rules,
+`media-enforcer.ts` runs the sweep, and `livekit.ts` returns `null` instead of
+throwing when the credentials are absent. A deployment with no media provider
+still runs proctored duels on self-reported device state — weaker, but working —
+which keeps the requirement from depending on a third party being configured.
+
 ---
 
 ## Project layout
@@ -262,12 +340,15 @@ src/
     globals.css           design tokens and base styles
   components/
     ui/                   design-system primitives
-    arena/                duel UI plus the useArena hook
+    arena/                duel UI, useArena and useMedia hooks
+    room/                 lobby device check
     auth/                 Codeforces sign-in flow
     Navbar.tsx
   context/                user session, theme
   lib/
-    services/             broadcast, evaluator, finalizer, standings, rooms
+    services/             broadcast, evaluator, finalizer, standings, rooms,
+                          media policy / enforcement
+    livekit.ts            token minting and webhook verification
     validation.ts         Zod schemas
     elo.ts                rating maths
     codeforces.ts         API client with timeouts and retries
@@ -314,6 +395,19 @@ always taken from the session, never from the request body.
 | POST   | `/api/rooms/[code]/rematch`   | yes  | 10 / min   | Clone a finished room, or continue a series                 |
 | GET    | `/api/rooms/public`           | no   | —          | Open-duels lobby                                            |
 
+### Proctoring
+
+| Method | Path                                | Auth | Rate limit | Description                                                    |
+| ------ | ----------------------------------- | ---- | ---------- | -------------------------------------------------------------- |
+| POST   | `/api/rooms/[code]/media/token`     | yes  | 20 / min   | Mint a LiveKit join token; participants only                   |
+| POST   | `/api/rooms/[code]/media/state`     | yes  | 60 / min   | Report your own device state                                   |
+| POST   | `/api/rooms/[code]/media/violation` | yes  | 20 / min   | Ask the server to re-check the room now; empty body by design  |
+| GET    | `/api/rooms/[code]/media/events`    | yes  | —          | Compliance log; room members only                              |
+| POST   | `/api/media/webhook`                | signed | —        | LiveKit callbacks, verified against the API key and secret     |
+
+`/media/state` is chattier than the other routes because devices flap — a lid
+closing, a reconnect — hence the higher limit.
+
 ### Users
 
 | Method | Path                                  | Rate limit | Description                              |
@@ -348,7 +442,7 @@ with a masked destination.
 
 ## Realtime events
 
-All events are broadcast on the channel `room-<CODE>`. Names are centralised in
+Most events are broadcast on the channel `room-<CODE>`. Names are centralised in
 `ROOM_EVENTS` in `src/lib/services/broadcast.ts`.
 
 | Event                         | Sent when                                             |
@@ -364,8 +458,17 @@ All events are broadcast on the channel `room-<CODE>`. Names are centralised in
 | `player-joined`               | Someone took a slot                                   |
 | `rematch-ready`               | A rematch room exists and is waiting                  |
 
+Camera and microphone traffic goes on its own channel, `room-<CODE>-media`, so
+it does not share a topic with the lobby's presence state:
+
+| Event             | Sent when                                                 |
+| ----------------- | --------------------------------------------------------- |
+| `media-state`     | Any device changed. Carries the full roster, not a delta, so a client that missed a message self-heals |
+| `media-violation` | A grace period expired — warned or forfeited              |
+
 The lobby additionally uses Supabase presence to show who is currently
-connected.
+connected, and in a proctored room the presence payload carries each player's
+device state so the other side updates instantly.
 
 ---
 
@@ -378,6 +481,13 @@ Several unique constraints double as concurrency guards:
   inflate penalty time.
 - `Participant @@unique([contestId, userId])` — makes joining idempotent.
 - `Problem @@unique([contestId, indexInContest])`.
+
+`MediaEvent` is append-only and carries a `source` of `client` or `server`. The
+distinction is kept deliberately: a self-reported event is weaker evidence than
+one LiveKit observed, and the compliance summary is honest about which it has.
+`Participant.violationSince` is null whenever a player is compliant, which is
+what lets the worker find every open violation across all live contests with one
+indexed lookup.
 
 If `prisma migrate` fails on one of these, the table already contains duplicate
 rows from before the constraint existed. Remove them first, for example:

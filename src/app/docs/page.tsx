@@ -12,6 +12,7 @@ import {
   Target,
   Trophy,
   Users,
+  Video,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -23,6 +24,7 @@ const SECTIONS = [
   { id: "modes", label: "Game modes", icon: Swords },
   { id: "scoring", label: "Scoring", icon: Zap },
   { id: "rooms", label: "Rooms & formats", icon: Users },
+  { id: "proctoring", label: "Camera & mic", icon: Video },
   { id: "series", label: "Series & rematches", icon: RotateCcw },
   { id: "ladder", label: "Elo ladder", icon: Trophy },
 ] as const;
@@ -220,6 +222,60 @@ export default function DocsPage() {
               Toggle <strong className="text-ink">list in open duels</strong> to
               publish your room on the home page so strangers can join. Leave it
               off and only people with the code can get in.
+            </p>
+          </Card>
+        </section>
+
+        <section id="proctoring" className="flex flex-col gap-4 scroll-mt-24">
+          <h2 className="text-2xl font-extrabold text-ink">
+            Camera &amp; microphone
+          </h2>
+          <p className="text-[0.95rem] leading-relaxed text-ink-dim">
+            When you create a duel you can require contestants to keep their
+            camera on, their microphone on, or both. Rooms with a requirement
+            are badged in the open-duels list, so nobody joins one by surprise.
+          </p>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Card className="flex flex-col gap-2.5">
+              <Users className="size-5 text-ink-dim" />
+              <h3 className="font-bold text-ink">Before the start</h3>
+              <p className="text-[0.85rem] leading-relaxed text-ink-faint">
+                Everyone runs a device check in the lobby. The host can&apos;t
+                start until every contestant&apos;s devices are actually live.
+              </p>
+            </Card>
+            <Card className="flex flex-col gap-2.5">
+              <Video className="size-5 text-ink-dim" />
+              <h3 className="font-bold text-ink">During</h3>
+              <p className="text-[0.85rem] leading-relaxed text-ink-faint">
+                Video sits beside the scoreboard. If a required device goes off,
+                the problems are hidden and a countdown starts.
+              </p>
+            </Card>
+            <Card className="flex flex-col gap-2.5">
+              <Shield className="size-5 text-ink-dim" />
+              <h3 className="font-bold text-ink">If it stays off</h3>
+              <p className="text-[0.85rem] leading-relaxed text-ink-faint">
+                Past the grace period the host&apos;s choice applies — either
+                the incident is logged and announced, or the duel is forfeited.
+              </p>
+            </Card>
+          </div>
+
+          <Card className="flex flex-col gap-2.5">
+            <h3 className="font-bold text-ink">What this is, and isn&apos;t</h3>
+            <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+              A camera shows who is at the keyboard. It can&apos;t see a second
+              device off to the side, so treat it as presence and
+              accountability rather than proof of a clean match. Nothing is
+              recorded — the video is live only, and the log afterwards shows
+              how long each device was off, not what anyone did.
+            </p>
+            <p className="text-[0.9rem] leading-relaxed text-ink-dim">
+              Supervisors are exempt: they&apos;re watching, not competing.
+              Practice runs can&apos;t require anything, since there&apos;s
+              nobody on the other side.
             </p>
           </Card>
         </section>

@@ -2,7 +2,7 @@
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Dices, Globe, Sparkles, Swords } from "lucide-react";
+import { Dices, Globe, Mic, Sparkles, Swords, Video } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import { apiFetch, errorMessage } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
@@ -37,6 +37,7 @@ type Mode = "LOCKOUT" | "BLITZ" | "CLASSIC";
 type Scoring = "ICPC" | "POINTS";
 type RatingMode = "RANGE" | "EXACT";
 type TagMode = "ANY" | "ALL";
+type Violation = "WARN" | "FORFEIT";
 
 const FORMAT_OPTIONS: SegmentOption<Format>[] = [
   {
@@ -72,6 +73,23 @@ const RATING_OPTIONS: SegmentOption<RatingMode>[] = [
   { value: "EXACT", label: "Per problem" },
 ];
 
+const GRACE_PRESETS = [15, 30, 60, 120];
+const MIN_GRACE = 10;
+const MAX_GRACE = 300;
+
+const VIOLATION_OPTIONS: SegmentOption<Violation>[] = [
+  {
+    value: "WARN",
+    label: "Warn",
+    hint: "Everyone is told, the incident is logged, the duel carries on.",
+  },
+  {
+    value: "FORFEIT",
+    label: "Forfeit",
+    hint: "The offender is resigned automatically once the grace period runs out.",
+  },
+];
+
 const BEST_OF_OPTIONS: SegmentOption<string>[] = [
   { value: "1", label: "Single", hint: "One game decides it." },
   { value: "3", label: "Best of 3", hint: "First to 2 wins takes the series." },
@@ -105,17 +123,28 @@ function CreateDuelForm() {
   const [excludedTags, setExcludedTags] = useState<string[]>([]);
   const [tagMode, setTagMode] = useState<TagMode>("ANY");
   const [isPublic, setIsPublic] = useState(false);
+  const [requireVideo, setRequireVideo] = useState(false);
+  const [requireAudio, setRequireAudio] = useState(false);
+  const [graceSeconds, setGraceSeconds] = useState(30);
+  const [violation, setViolation] = useState<Violation>("WARN");
   const [seed, setSeed] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // A practice run or a supervised room can't be part of a series.
+  // A practice run or a supervised room can't be part of a series, and a
+  // practice run has nobody to show a camera to.
   useEffect(() => {
     if (format !== "PLAYER" && bestOf !== "1") setBestOf("1");
-    if (format === "SOLO" && isPublic) setIsPublic(false);
-  }, [format, bestOf, isPublic]);
+    if (format === "SOLO") {
+      if (isPublic) setIsPublic(false);
+      if (requireVideo) setRequireVideo(false);
+      if (requireAudio) setRequireAudio(false);
+    }
+  }, [format, bestOf, isPublic, requireVideo, requireAudio]);
+
+  const mediaRequired = requireVideo || requireAudio;
 
   // Keep the per-problem rating list the same length as the problem count.
   const setCount = (count: number) => {
@@ -164,8 +193,21 @@ function CreateDuelForm() {
         : exactRatings.join(" / "),
     ];
     if (bestOf !== "1") parts.push(`best of ${bestOf}`);
+    if (requireVideo && requireAudio) parts.push("camera + mic on");
+    else if (requireVideo) parts.push("camera on");
+    else if (requireAudio) parts.push("mic on");
     return parts.join(" · ");
-  }, [problemCount, duration, ratingMode, minRating, maxRating, exactRatings, bestOf]);
+  }, [
+    problemCount,
+    duration,
+    ratingMode,
+    minRating,
+    maxRating,
+    exactRatings,
+    bestOf,
+    requireVideo,
+    requireAudio,
+  ]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -181,6 +223,10 @@ function CreateDuelForm() {
     }
     if (duration < MIN_DURATION || duration > MAX_DURATION) {
       setError(`Duration must be between ${MIN_DURATION} and ${MAX_DURATION} minutes.`);
+      return;
+    }
+    if (mediaRequired && (graceSeconds < MIN_GRACE || graceSeconds > MAX_GRACE)) {
+      setError(`Grace period must be between ${MIN_GRACE} and ${MAX_GRACE} seconds.`);
       return;
     }
 
@@ -206,6 +252,10 @@ function CreateDuelForm() {
             excludedTags,
             tagMatchMode: tagMode,
             bestOf: Number(bestOf),
+            requireVideo,
+            requireAudio,
+            mediaGraceSeconds: graceSeconds,
+            mediaViolationAction: violation,
             seed: seed.trim(),
           },
         },
@@ -325,6 +375,99 @@ function CreateDuelForm() {
                   : "Anyone can find and join this room from the home page. Leave off to share the code privately."
               }
             />
+          </Card>
+
+          {/* ── Proctoring ──────────────────────────────────────────────── */}
+          <Card className="flex flex-col gap-5">
+            <Field
+              label="Camera & microphone"
+              hint={
+                format === "SOLO"
+                  ? "Practice runs have nobody on the other side."
+                  : "Contestants must keep these on for the whole duel. Supervisors are exempt."
+              }
+            >
+              <div className="flex flex-col gap-4">
+                <Switch
+                  id="require-video"
+                  checked={requireVideo}
+                  onChange={setRequireVideo}
+                  disabled={format === "SOLO"}
+                  label={
+                    <span className="flex items-center gap-2">
+                      <Video className="size-3.5 text-ink-faint" />
+                      Require camera
+                    </span>
+                  }
+                  description="Both contestants have to share video before you can start."
+                />
+                <Switch
+                  id="require-audio"
+                  checked={requireAudio}
+                  onChange={setRequireAudio}
+                  disabled={format === "SOLO"}
+                  label={
+                    <span className="flex items-center gap-2">
+                      <Mic className="size-3.5 text-ink-faint" />
+                      Require microphone
+                    </span>
+                  }
+                  description="Mics stay unmuted for the whole contest."
+                />
+              </div>
+            </Field>
+
+            {mediaRequired && (
+              <>
+                <Field
+                  label={`Grace period — ${graceSeconds}s`}
+                  hint="How long a device may be off before it counts as a violation."
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    {GRACE_PRESETS.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setGraceSeconds(preset)}
+                        className={cn(
+                          "h-10 cursor-pointer rounded-full border px-4 font-mono text-sm font-bold transition-colors",
+                          graceSeconds === preset
+                            ? "border-ink bg-ink text-ink-invert"
+                            : "border-white/15 bg-transparent text-ink-dim hover:border-white/35 hover:text-ink",
+                        )}
+                      >
+                        {preset}s
+                      </button>
+                    ))}
+                    <Input
+                      type="number"
+                      aria-label="Custom grace period in seconds"
+                      min={MIN_GRACE}
+                      max={MAX_GRACE}
+                      value={graceSeconds}
+                      onChange={(e) => setGraceSeconds(Number(e.target.value))}
+                      className="h-10 w-24 text-center font-mono"
+                    />
+                  </div>
+                </Field>
+
+                <Field label="If it stays off">
+                  <SegmentedControl
+                    value={violation}
+                    onChange={setViolation}
+                    options={VIOLATION_OPTIONS}
+                    size="sm"
+                    ariaLabel="What happens on a media violation"
+                  />
+                </Field>
+
+                <Alert tone="info">
+                  A camera shows who is at the keyboard — it can&apos;t see a
+                  second device off to the side. Treat this as presence and
+                  accountability, not proof of a clean match.
+                </Alert>
+              </>
+            )}
           </Card>
         </div>
 
