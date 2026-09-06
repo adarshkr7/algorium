@@ -10,7 +10,11 @@ import {
   requireAuth,
 } from "@/lib/api-utils";
 import { CreateContestSchema } from "@/lib/validation";
-import { findActiveRoomForUser } from "@/lib/services/room-service";
+import {
+  findActiveRoomForUser,
+  PUBLIC_USER_SELECT,
+  ROOM_PLAYERS_INCLUDE,
+} from "@/lib/services/room-service";
 
 const MAX_CODE_ATTEMPTS = 10;
 
@@ -23,7 +27,7 @@ const MAX_CODE_ATTEMPTS = 10;
  */
 export async function POST(req: Request) {
   try {
-    const limited = enforceRateLimit(
+    const limited = await enforceRateLimit(
       req,
       10,
       60_000,
@@ -174,14 +178,10 @@ export async function POST(req: Request) {
         contest: {
           include: {
             problems: { orderBy: { indexInContest: "asc" } },
-            participants: { include: { user: true } },
+            participants: { include: { user: { select: PUBLIC_USER_SELECT } } },
           },
         },
-        host: true,
-        guest: true,
-        player1: true,
-        player2: true,
-        series: true,
+        ...ROOM_PLAYERS_INCLUDE,
       },
     });
 

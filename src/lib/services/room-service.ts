@@ -1,23 +1,71 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
+/**
+ * Every user field that may leave the server, and nothing else.
+ *
+ * Prisma's `user: true` means *all* scalar columns, which on this model
+ * includes `email`, `passwordHash`, `verificationToken` and `tokenExpiresAt`.
+ * Room payloads embed up to three users and are handed to the browser (and,
+ * for submissions, broadcast over a public realtime channel), so a bare `true`
+ * published every player's credentials — and `verificationToken` doubles as
+ * the password-reset OTP, which made it an account-takeover primitive.
+ *
+ * Use this select anywhere a User is nested inside a response. It carries
+ * everything the arena UI renders plus the counters `contest-finalizer` needs
+ * to compute Elo and streaks.
+ */
+export const PUBLIC_USER_SELECT = {
+  id: true,
+  handle: true,
+  avatar: true,
+  rating: true,
+  maxRating: true,
+  rank: true,
+  maxRank: true,
+  elo: true,
+  peakElo: true,
+  wins: true,
+  losses: true,
+  draws: true,
+  currentStreak: true,
+  bestStreak: true,
+  createdAt: true,
+} satisfies Prisma.UserSelect;
+
+/** A user as the client sees them. */
+export type PublicUserPayload = Prisma.UserGetPayload<{
+  select: typeof PUBLIC_USER_SELECT;
+}>;
+
+const publicUser = { select: PUBLIC_USER_SELECT } as const;
+
 /** The include shape every room-returning endpoint uses. */
 export const ROOM_INCLUDE = {
-  host: true,
-  guest: true,
-  player1: true,
-  player2: true,
+  host: publicUser,
+  guest: publicUser,
+  player1: publicUser,
+  player2: publicUser,
   series: true,
   contest: {
     include: {
       problems: { orderBy: { indexInContest: "asc" } },
-      participants: { include: { user: true } },
+      participants: { include: { user: publicUser } },
       submissions: {
-        include: { user: true, problem: true },
+        include: { user: publicUser, problem: true },
         orderBy: { timeSubmitted: "asc" },
       },
     },
   },
+} satisfies Prisma.RoomInclude;
+
+/** Room players, for the room-returning endpoints that build their own include. */
+export const ROOM_PLAYERS_INCLUDE = {
+  host: publicUser,
+  guest: publicUser,
+  player1: publicUser,
+  player2: publicUser,
+  series: true,
 } satisfies Prisma.RoomInclude;
 
 export type FullRoom = Prisma.RoomGetPayload<{ include: typeof ROOM_INCLUDE }>;
@@ -85,6 +133,24 @@ export async function findActiveRoomForUser(userId: string) {
     },
     orderBy: { createdAt: "desc" },
   });
+}
+
+/** True when the user occupies any seat in the room. */
+export function isRoomMember(
+  room: {
+    hostId: string;
+    guestId: string | null;
+    player1Id: string | null;
+    player2Id: string | null;
+  },
+  userId: string,
+): boolean {
+  return (
+    room.hostId === userId ||
+    room.guestId === userId ||
+    room.player1Id === userId ||
+    room.player2Id === userId
+  );
 }
 
 /** Resolves the two contestants regardless of hosting mode. */

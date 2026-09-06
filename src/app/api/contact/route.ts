@@ -17,7 +17,7 @@ import { ContactSchema } from "@/lib/validation";
  */
 export async function POST(req: Request) {
   try {
-    const limited = enforceRateLimit(
+    const limited = await enforceRateLimit(
       req,
       3,
       10 * 60_000,

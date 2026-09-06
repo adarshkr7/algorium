@@ -13,6 +13,7 @@ import {
   type ContestFinishReason,
   type SeriesSnapshot,
 } from "./broadcast";
+import { PUBLIC_USER_SELECT, ROOM_PLAYERS_INCLUDE } from "./room-service";
 
 export interface FinishResult {
   winnerId: string | null;
@@ -34,17 +35,9 @@ export interface FinishOptions {
 }
 
 const CONTEST_INCLUDE = {
-  room: {
-    include: {
-      host: true,
-      guest: true,
-      player1: true,
-      player2: true,
-      series: true,
-    },
-  },
+  room: { include: ROOM_PLAYERS_INCLUDE },
   problems: { orderBy: { indexInContest: "asc" } },
-  participants: { include: { user: true } },
+  participants: { include: { user: { select: PUBLIC_USER_SELECT } } },
   submissions: true,
 } satisfies Prisma.ContestInclude;
 

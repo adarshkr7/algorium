@@ -11,7 +11,11 @@ import {
   requireAuth,
 } from "@/lib/api-utils";
 import { RematchSchema } from "@/lib/validation";
-import { ROOM_INCLUDE, findActiveRoomForUser } from "@/lib/services/room-service";
+import {
+  ROOM_INCLUDE,
+  ROOM_PLAYERS_INCLUDE,
+  findActiveRoomForUser,
+} from "@/lib/services/room-service";
 import { BroadcastService } from "@/lib/services/broadcast";
 
 /**
@@ -28,7 +32,7 @@ export async function POST(
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    const limited = enforceRateLimit(
+    const limited = await enforceRateLimit(
       req,
       10,
       60_000,
@@ -51,14 +55,7 @@ export async function POST(
 
     const source = await prisma.room.findUnique({
       where: { code },
-      include: {
-        contest: true,
-        host: true,
-        guest: true,
-        player1: true,
-        player2: true,
-        series: true,
-      },
+      include: { contest: true, ...ROOM_PLAYERS_INCLUDE },
     });
 
     if (!source || !source.contest) {

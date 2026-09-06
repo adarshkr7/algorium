@@ -29,7 +29,7 @@ export async function POST(
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    const limited = enforceRateLimit(req, 20, 60_000);
+    const limited = await enforceRateLimit(req, 20, 60_000);
     if (limited) return limited;
 
     const session = await requireAuth(req);

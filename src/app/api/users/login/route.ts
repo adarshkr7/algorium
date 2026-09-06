@@ -36,7 +36,7 @@ function randomProblem(): string {
  */
 export async function POST(req: Request) {
   try {
-    const limited = enforceRateLimit(
+    const limited = await enforceRateLimit(
       req,
       8,
       60_000,
@@ -76,8 +76,8 @@ export async function POST(req: Request) {
       maxRating: cfUser.maxRating,
       rank: cfUser.rank,
       maxRank: cfUser.maxRank,
-      verificationToken: token,
-      tokenExpiresAt,
+      cfVerifyProblem: token,
+      cfVerifyExpiresAt: tokenExpiresAt,
     };
 
     await prisma.user.upsert({

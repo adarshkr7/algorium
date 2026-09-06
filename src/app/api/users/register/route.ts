@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import {
@@ -17,6 +18,14 @@ import { RegisterSchema } from "@/lib/validation";
 
 const BCRYPT_ROUNDS = 12;
 
+/** Length-safe constant-time comparison. */
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 /**
  * POST /api/users/register
  * Step 3 — set an email and password, using the token issued after the
@@ -24,7 +33,7 @@ const BCRYPT_ROUNDS = 12;
  */
 export async function POST(req: Request) {
   try {
-    const limited = enforceRateLimit(
+    const limited = await enforceRateLimit(
       req,
       6,
       60_000,
@@ -40,8 +49,8 @@ export async function POST(req: Request) {
     });
 
     if (
-      !dbUser ||
-      dbUser.verificationToken !== `SET_PASSWORD_${body.passwordToken}`
+      !dbUser?.passwordSetupToken ||
+      !safeEqual(dbUser.passwordSetupToken, body.passwordToken)
     ) {
       return apiError(
         "That registration link is no longer valid. Verify your handle again.",
@@ -50,7 +59,10 @@ export async function POST(req: Request) {
       );
     }
 
-    if (dbUser.tokenExpiresAt && new Date() > dbUser.tokenExpiresAt) {
+    if (
+      !dbUser.passwordSetupExpiresAt ||
+      new Date() > dbUser.passwordSetupExpiresAt
+    ) {
       return apiError(
         "Your registration window expired. Verify your handle again.",
         410,
@@ -72,21 +84,31 @@ export async function POST(req: Request) {
 
     const passwordHash = await bcrypt.hash(body.password, BCRYPT_ROUNDS);
 
-    const user = await prisma.user.update({
+    // Setting a password ends every session that predates it — this doubles as
+    // the account-recovery path, so anyone who was signed in on the strength
+    // of the old credentials should be turned out.
+    const updated = await prisma.user.update({
       where: { handle: dbUser.handle },
       data: {
         email: body.email,
         passwordHash,
-        verificationToken: null,
-        tokenExpiresAt: null,
+        passwordSetupToken: null,
+        passwordSetupExpiresAt: null,
+        resetOtpHash: null,
+        resetOtpExpiresAt: null,
+        resetOtpAttempts: 0,
+        tokenVersion: { increment: 1 },
         lastSeenAt: new Date(),
       },
-      select: PUBLIC_USER_FIELDS,
+      select: { ...PUBLIC_USER_FIELDS, tokenVersion: true },
     });
+
+    const { tokenVersion, ...user } = updated;
 
     const token = await createSessionToken({
       userId: user.id,
       handle: user.handle,
+      tokenVersion,
     });
 
     return apiSuccess({ user }, 200, {

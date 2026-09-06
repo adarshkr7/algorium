@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import { prisma } from "@/lib/prisma";
 import {
@@ -11,6 +12,7 @@ import {
 import { SendOtpSchema } from "@/lib/validation";
 
 const OTP_TTL_MS = 10 * 60 * 1000;
+const BCRYPT_ROUNDS = 10;
 
 /** Masks an address for the UI: adarshjijh@gmail.com -> a•••••••h@gmail.com */
 function maskEmail(email: string): string {
@@ -38,7 +40,7 @@ function buildTransport() {
  */
 export async function POST(req: Request) {
   try {
-    const limited = enforceRateLimit(
+    const limited = await enforceRateLimit(
       req,
       3,
       60_000,
@@ -81,11 +83,14 @@ export async function POST(req: Request) {
 
     const otp = crypto.randomInt(100000, 1000000).toString();
 
+    // Stored hashed: a six-digit code is only 10^6 wide, so anything that can
+    // read the row can use the code. The plaintext exists only in the email.
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        verificationToken: otp,
-        tokenExpiresAt: new Date(Date.now() + OTP_TTL_MS),
+        resetOtpHash: await bcrypt.hash(otp, BCRYPT_ROUNDS),
+        resetOtpExpiresAt: new Date(Date.now() + OTP_TTL_MS),
+        resetOtpAttempts: 0,
       },
     });
 

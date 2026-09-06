@@ -58,6 +58,7 @@ Open <http://localhost:3000>.
 | `npm run start:workers` | Both workers without the dev server, for a separate process in production |
 | `npm run build`         | Production build                                                          |
 | `npm run typecheck`     | `tsc --noEmit`                                                            |
+| `npm test`              | Unit tests for the media policy and the rate-limit window                 |
 | `npm run lint`          | ESLint                                                                    |
 | `npm run db:push`       | Push the schema without creating a migration                              |
 | `npm run db:migrate`    | Create and apply a migration                                              |
@@ -84,7 +85,7 @@ matter most:
 | `EMAIL_USER` / `EMAIL_PASS`            | optional          | Gmail address and app password for password-reset codes |
 | `LIVEKIT_URL` / `_API_KEY` / `_API_SECRET` | optional      | Carries video in proctored rooms                        |
 | `NEXT_PUBLIC_LIVEKIT_URL`              | optional          | Same URL, exposed to the browser                        |
-| `REDIS_URL`                            | optional          | Defaults to `redis://localhost:6379`                    |
+| `REDIS_URL`                            | in production     | Solved-problem cache **and** the shared rate-limit counters |
 
 ### JWT_SECRET
 
@@ -388,7 +389,7 @@ always taken from the session, never from the request body.
 | ------ | ----------------------------- | ---- | ---------- | ----------------------------------------------------------- |
 | POST   | `/api/contests/create`        | yes  | 10 / min   | Create a room, generate problems, optionally start a series |
 | POST   | `/api/contests/[id]/evaluate` | yes  | 30 / min   | Run one evaluation pass; participants only                  |
-| GET    | `/api/rooms/[code]`           | no   | —          | Full room state for the lobby and arena                     |
+| GET    | `/api/rooms/[code]`           | yes  | 120 / min  | Full room state; non-members get it without the submission feed |
 | POST   | `/api/rooms/[code]/join`      | yes  | 30 / min   | Take a free slot                                            |
 | POST   | `/api/rooms/[code]/start`     | yes  | —          | Host only; starts the clock                                 |
 | POST   | `/api/rooms/[code]/leave`     | yes  | —          | Cancels before the start, resigns after it                  |
@@ -503,6 +504,18 @@ Indexes are defined for the access patterns that matter: the Elo and win
 leaderboards, room lookups by status and participant, submissions by contest and
 time, and match history by user and date.
 
+`User` keeps its secrets in purpose-specific columns — `cfVerifyProblem`,
+`passwordSetupToken`, `resetOtpHash` — rather than the single overloaded
+`verificationToken` it used to. Three unrelated flows shared that column and
+overwrote each other, and pooling them put the password-reset code in the same
+field that room payloads serialised.
+
+Anything that nests a `User` in a response must select through
+`PUBLIC_USER_SELECT` in `src/lib/services/room-service.ts`. Prisma's
+`include: { user: true }` pulls *every* scalar column, `passwordHash` and
+`resetOtpHash` included, and room payloads go both to the browser and — for
+submissions — over a public realtime channel.
+
 ---
 
 ## Deployment
@@ -515,7 +528,10 @@ time, and match history by user and date.
    `npm run start:workers`. They are infinite loops and will not survive on a
    serverless platform. A small container or a worker dyno is enough; both
    handle `SIGINT` and `SIGTERM` cleanly.
-5. Point `REDIS_URL` at a managed Redis instance if you want warm caches.
+5. Point `REDIS_URL` at a managed Redis instance. This is not just about warm
+   caches any more: the API rate limits live there, and without it every
+   instance counts on its own — which on a serverless host means effectively no
+   limit at all on the sign-in and password-reset endpoints.
 
 If you skip step 4 the app still works, because the arena polls the evaluate
 endpoint, but contests will only be finalised while at least one player has the
@@ -528,9 +544,15 @@ page open.
 **`[auth] JWT_SECRET is unset or weak`** — expected in development. Set
 `JWT_SECRET` in `.env` and restart; environment variables are read at boot.
 
-**`[redis] unavailable ... ECONNREFUSED 127.0.0.1:6379`** — harmless. Redis is
-optional; the app falls back to calling Codeforces directly. Start Redis or set
-`REDIS_URL` to remove the warning.
+**`[redis] unavailable ... ECONNREFUSED 127.0.0.1:6379`** — harmless in
+development. The solved-problem cache falls back to calling Codeforces directly
+and the rate limiter falls back to per-process counters, which still work on a
+single node. In production this warning means your rate limits are no longer
+shared between instances — treat it as an alert, not a note.
+
+**`Your session has expired. Please sign in again.` right after deploying** —
+expected once. Sessions now carry a `tokenVersion` claim, and cookies issued
+before that change have none, so everyone signs in one more time.
 
 **Type errors about `elo`, `isSolo`, `series` or `tagMatchMode`** — the
 generated Prisma client is stale. Run `npx prisma generate`.

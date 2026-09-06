@@ -23,7 +23,7 @@ import { PasswordAuthSchema } from "@/lib/validation";
  */
 export async function POST(req: Request) {
   try {
-    const limited = enforceRateLimit(
+    const limited = await enforceRateLimit(
       req,
       10,
       60_000,
@@ -55,6 +55,7 @@ export async function POST(req: Request) {
     const token = await createSessionToken({
       userId: dbUser.id,
       handle: dbUser.handle,
+      tokenVersion: dbUser.tokenVersion,
     });
 
     const user = await prisma.user.update({

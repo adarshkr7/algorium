@@ -39,6 +39,8 @@ const SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days in seconds
 export interface SessionPayload {
   userId: string;
   handle: string;
+  /** The account's `tokenVersion` when this session was minted. */
+  tokenVersion: number;
 }
 
 /** Creates a signed JWT session token. */
@@ -52,20 +54,46 @@ export async function createSessionToken(
     .sign(JWT_SECRET);
 }
 
-/** Verifies a JWT session token and returns the payload. */
+/**
+ * Verifies a session token's signature and shape. Says nothing about whether
+ * the session has since been revoked — see `assertCurrentSession`.
+ *
+ * A token with no `tokenVersion` claim predates session versioning and is
+ * rejected outright, which signs out anyone holding a cookie issued while the
+ * room endpoint was leaking password hashes.
+ */
 export async function verifySessionToken(
   token: string,
 ): Promise<SessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, JWT_SECRET);
     if (!payload.userId || !payload.handle) return null;
+    if (typeof payload.tokenVersion !== "number") return null;
     return {
       userId: payload.userId as string,
       handle: payload.handle as string,
+      tokenVersion: payload.tokenVersion,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Confirms the session has not been revoked since it was issued.
+ *
+ * Sessions are stateless JWTs valid for 30 days, so without this a password
+ * reset left a stolen cookie working for the rest of the month. One primary
+ * key lookup per authenticated request buys the ability to cut sessions off.
+ */
+export async function assertCurrentSession(
+  session: SessionPayload,
+): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { tokenVersion: true },
+  });
+  return user !== null && user.tokenVersion === session.tokenVersion;
 }
 
 /** Reads the session cookie and returns the authenticated user, or null. */

@@ -129,6 +129,14 @@ export default function RoomLobbyPage({
 
   // ── Load + auto-join ─────────────────────────────────────────────────────
   const loadRoom = useCallback(async () => {
+    // The room endpoint is authenticated now, so say what to do about it
+    // rather than letting the fetch fail into a generic "couldn't load".
+    if (!user) {
+      setError("Sign in to view this room.");
+      setLoading(false);
+      return;
+    }
+
     try {
       const data = await apiFetch<{ room: RoomState }>(`/api/rooms/${code}`, {
         cache: "no-store",

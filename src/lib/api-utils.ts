@@ -2,7 +2,11 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getSessionFromRequest, type SessionPayload } from "./auth";
+import {
+  assertCurrentSession,
+  getSessionFromRequest,
+  type SessionPayload,
+} from "./auth";
 import { toJsonSafe } from "./json";
 import { rateLimit, type RateLimitResult } from "./rate-limit";
 
@@ -45,13 +49,24 @@ export function isErrorResponse(value: unknown): value is NextResponse {
 
 // ── Auth guard ───────────────────────────────────────────────────────────────
 
-/** Extracts and verifies the session. Returns the payload or a 401 response. */
+/**
+ * Extracts and verifies the session. Returns the payload or a 401 response.
+ *
+ * Checks the account's `tokenVersion` as well as the signature, so a session
+ * that was revoked by a password reset is rejected rather than honoured for
+ * the remaining weeks of its 30-day expiry.
+ */
 export async function requireAuth(
   req: Request,
 ): Promise<SessionPayload | NextResponse> {
   const session = await getSessionFromRequest(req);
   if (!session) {
     return apiError("Authentication required", 401, { code: "UNAUTHENTICATED" });
+  }
+  if (!(await assertCurrentSession(session))) {
+    return apiError("Your session has expired. Please sign in again.", 401, {
+      code: "SESSION_REVOKED",
+    });
   }
   return session;
 }
@@ -94,14 +109,16 @@ export async function parseBody<S extends z.ZodType>(
 /**
  * Applies a rate limit and returns a 429 response when exceeded.
  * On success returns null so callers can `if (limited) return limited;`.
+ *
+ * Async since the counters moved into Redis — every call site must `await`.
  */
-export function enforceRateLimit(
+export async function enforceRateLimit(
   req: Request,
   limit: number,
   windowMs: number,
   message = "Too many requests. Please slow down.",
-): NextResponse | null {
-  const result: RateLimitResult = rateLimit(req, limit, windowMs);
+): Promise<NextResponse | null> {
+  const result: RateLimitResult = await rateLimit(req, limit, windowMs);
   if (result.success) return null;
 
   const retryAfter = Math.max(1, Math.ceil((result.reset - Date.now()) / 1000));
