@@ -58,6 +58,7 @@ Open <http://localhost:3000>.
 | `npm run start:workers` | Both workers without the dev server, for a separate process in production |
 | `npm run build`         | Production build                                                          |
 | `npm run typecheck`     | `tsc --noEmit`                                                            |
+| `npm test`              | Every `*.test.mts` under `src/` — scoring, Elo, media policy, rate limits |
 | `npm run lint`          | ESLint                                                                    |
 | `npm run db:push`       | Push the schema without creating a migration                              |
 | `npm run db:migrate`    | Create and apply a migration                                              |
@@ -84,7 +85,7 @@ matter most:
 | `EMAIL_USER` / `EMAIL_PASS`            | optional          | Gmail address and app password for password-reset codes |
 | `LIVEKIT_URL` / `_API_KEY` / `_API_SECRET` | optional      | Carries video in proctored rooms                        |
 | `NEXT_PUBLIC_LIVEKIT_URL`              | optional          | Same URL, exposed to the browser                        |
-| `REDIS_URL`                            | optional          | Defaults to `redis://localhost:6379`                    |
+| `REDIS_URL`                            | in production     | Solved-problem cache **and** the shared rate-limit counters |
 
 ### JWT_SECRET
 
@@ -353,9 +354,28 @@ src/
     elo.ts                rating maths
     codeforces.ts         API client with timeouts and retries
     api-utils.ts          response helpers, auth guard, rate limiting
+    rate-limit.ts         Redis-backed windows, in-process fallback
+    leader-lock.ts        worker leader election
+    logger.ts             structured logging and the error-reporter hook
   worker/                 the two background daemons
+  *.test.mts              suites, run by `npm test`
 prisma/schema.prisma
+scripts/run-tests.mjs     test discovery
+Dockerfile                web and workers targets
+docker-compose.yml        full local stack
+.github/workflows/ci.yml  typecheck, lint, test, build
 ```
+
+### Logging
+
+`src/lib/logger.ts` emits one JSON object per line in production and readable
+text in development. `reportError` there is deliberately empty: it is called
+for every unhandled API error, so wiring Sentry or an OTel exporter into that
+one function covers the whole surface without touching a route.
+
+Each 500 carries a `requestId`, reusing the id the proxy already assigned
+(`x-request-id`, `x-vercel-id`, `fly-request-id`, `cf-ray`) so a user's "it
+said internal server error" leads straight to the log line.
 
 ### Styling
 
@@ -388,11 +408,12 @@ always taken from the session, never from the request body.
 | ------ | ----------------------------- | ---- | ---------- | ----------------------------------------------------------- |
 | POST   | `/api/contests/create`        | yes  | 10 / min   | Create a room, generate problems, optionally start a series |
 | POST   | `/api/contests/[id]/evaluate` | yes  | 30 / min   | Run one evaluation pass; participants only                  |
-| GET    | `/api/rooms/[code]`           | no   | —          | Full room state for the lobby and arena                     |
+| GET    | `/api/rooms/[code]`           | yes  | 120 / min  | Full room state; non-members get it without the submission feed |
 | POST   | `/api/rooms/[code]/join`      | yes  | 30 / min   | Take a free slot                                            |
 | POST   | `/api/rooms/[code]/start`     | yes  | —          | Host only; starts the clock                                 |
-| POST   | `/api/rooms/[code]/leave`     | yes  | —          | Cancels before the start, resigns after it                  |
+| POST   | `/api/rooms/[code]/leave`     | yes  | —          | Host cancels, guest vacates; after the start it resigns      |
 | POST   | `/api/rooms/[code]/rematch`   | yes  | 10 / min   | Clone a finished room, or continue a series                 |
+| GET    | `/api/health`                 | no   | —          | Liveness for probes; 503 when Postgres is unreachable        |
 | GET    | `/api/rooms/public`           | no   | —          | Open-duels lobby                                            |
 
 ### Proctoring
@@ -503,6 +524,18 @@ Indexes are defined for the access patterns that matter: the Elo and win
 leaderboards, room lookups by status and participant, submissions by contest and
 time, and match history by user and date.
 
+`User` keeps its secrets in purpose-specific columns — `cfVerifyProblem`,
+`passwordSetupToken`, `resetOtpHash` — rather than the single overloaded
+`verificationToken` it used to. Three unrelated flows shared that column and
+overwrote each other, and pooling them put the password-reset code in the same
+field that room payloads serialised.
+
+Anything that nests a `User` in a response must select through
+`PUBLIC_USER_SELECT` in `src/lib/services/room-service.ts`. Prisma's
+`include: { user: true }` pulls *every* scalar column, `passwordHash` and
+`resetOtpHash` included, and room payloads go both to the browser and — for
+submissions — over a public realtime channel.
+
 ---
 
 ## Deployment
@@ -515,11 +548,63 @@ time, and match history by user and date.
    `npm run start:workers`. They are infinite loops and will not survive on a
    serverless platform. A small container or a worker dyno is enough; both
    handle `SIGINT` and `SIGTERM` cleanly.
-5. Point `REDIS_URL` at a managed Redis instance if you want warm caches.
+
+   More than one replica is safe: each worker takes a short Redis lease and
+   only the holder does the work, so a second replica stands by as a warm spare
+   and takes over within a lease period if the first dies. Without Redis there
+   is no election and every replica works — fine for one, wasteful and
+   rate-limit-hungry for more.
+
+   More than one replica is safe: each worker takes a short Redis lease and
+   only the holder does the work, so the second replica stands by as a warm
+   spare and takes over within a lease period if the first dies. Without Redis
+   there is no election and every replica works — fine for one, wasteful and
+   rate-limit-hungry for more.
+5. Point `REDIS_URL` at a managed Redis instance. This is not just about warm
+   caches any more: the API rate limits live there, and without it every
+   instance counts on its own — which on a serverless host means effectively no
+   limit at all on the sign-in and password-reset endpoints.
 
 If you skip step 4 the app still works, because the arena polls the evaluate
 endpoint, but contests will only be finalised while at least one player has the
 page open.
+
+### Containers
+
+The `Dockerfile` builds both halves from one build stage:
+
+```bash
+docker build --target web     -t algorium-web .
+docker build --target workers -t algorium-workers .
+```
+
+`docker compose up --build` runs web, workers, Postgres and Redis together for
+a local end-to-end stack. Point `DATABASE_URL` elsewhere and drop the
+`postgres` service to run it against a managed database.
+
+`NEXT_PUBLIC_*` values are compiled into the client bundle, so they are build
+args rather than runtime environment — pass the real Supabase URL at build time
+or the browser will call a placeholder.
+
+### Health checks
+
+`GET /api/health` returns 200 while Postgres answers and 503 when it does not,
+which is the signal a load balancer or container probe wants. Redis appears in
+the body as `degraded` but never fails the check: without it the app makes more
+Codeforces calls and rate-limits per process, which is worse but not down.
+
+### Security headers
+
+`next.config.ts` sets HSTS, `nosniff`, `X-Frame-Options`, a referrer policy, a
+`Permissions-Policy` that keeps the camera and microphone available to this
+origin and switches everything else off, and a Content-Security-Policy.
+
+The CSP's `connect-src` is derived from `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_LIVEKIT_URL` at build time, with wildcards covering the managed
+clouds' per-region subdomains. If you add a third-party script, font host or
+API, it must be added there or the browser will silently refuse to load it —
+check the console for a `Refused to connect` line before assuming the code is
+at fault.
 
 ---
 
@@ -528,12 +613,26 @@ page open.
 **`[auth] JWT_SECRET is unset or weak`** — expected in development. Set
 `JWT_SECRET` in `.env` and restart; environment variables are read at boot.
 
-**`[redis] unavailable ... ECONNREFUSED 127.0.0.1:6379`** — harmless. Redis is
-optional; the app falls back to calling Codeforces directly. Start Redis or set
-`REDIS_URL` to remove the warning.
+**`[redis] unavailable ... ECONNREFUSED 127.0.0.1:6379`** — harmless in
+development. The solved-problem cache falls back to calling Codeforces directly
+and the rate limiter falls back to per-process counters, which still work on a
+single node. In production this warning means your rate limits are no longer
+shared between instances — treat it as an alert, not a note.
+
+**`Your session has expired. Please sign in again.` right after deploying** —
+expected once. Sessions now carry a `tokenVersion` claim, and cookies issued
+before that change have none, so everyone signs in one more time.
 
 **Type errors about `elo`, `isSolo`, `series` or `tagMatchMode`** — the
 generated Prisma client is stale. Run `npx prisma generate`.
+
+**"Refused to connect / load ... violates the following Content Security
+Policy directive"** — a new external origin needs adding to the policy in
+`next.config.ts`. The message names the directive that blocked it.
+
+**`[lease] Redis unreachable — running "arena-evaluator" without leader
+election`** — the workers could not reach Redis and are each doing the work.
+Harmless on a single replica, doubling your Codeforces traffic on more.
 
 **"Attempted to call X from the server"** — a server component is calling a
 plain function exported from a `"use client"` module. Move the function to a

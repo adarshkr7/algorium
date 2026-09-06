@@ -24,7 +24,7 @@ export async function POST(
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    const limited = enforceRateLimit(req, 20, 60_000);
+    const limited = await enforceRateLimit(req, 20, 60_000);
     if (limited) return limited;
 
     const session = await requireAuth(req);
@@ -38,6 +38,6 @@ export async function POST(
     const acted = await enforceRoomMedia(rawCode.toUpperCase());
     return apiSuccess({ acted });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/media/violation", error);
+    return handleUnexpected("rooms/[code]/media/violation", error, req);
   }
 }

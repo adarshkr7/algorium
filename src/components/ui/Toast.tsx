@@ -9,6 +9,7 @@ import React, {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useMounted } from "@/lib/use-mounted";
 import {
   Activity,
   CheckCircle2,
@@ -59,10 +60,8 @@ const TONE_STYLES: Record<ToastTone, { wrap: string; icon: React.ReactNode }> = 
  */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [mounted, setMounted] = useState(false);
   const nextId = useRef(1);
-
-  React.useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   const dismiss = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

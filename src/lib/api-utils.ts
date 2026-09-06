@@ -2,8 +2,13 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getSessionFromRequest, type SessionPayload } from "./auth";
+import {
+  assertCurrentSession,
+  getSessionFromRequest,
+  type SessionPayload,
+} from "./auth";
 import { toJsonSafe } from "./json";
+import { log, reportError } from "./logger";
 import { rateLimit, type RateLimitResult } from "./rate-limit";
 
 // ── Standardized API responses ───────────────────────────────────────────────
@@ -45,13 +50,24 @@ export function isErrorResponse(value: unknown): value is NextResponse {
 
 // ── Auth guard ───────────────────────────────────────────────────────────────
 
-/** Extracts and verifies the session. Returns the payload or a 401 response. */
+/**
+ * Extracts and verifies the session. Returns the payload or a 401 response.
+ *
+ * Checks the account's `tokenVersion` as well as the signature, so a session
+ * that was revoked by a password reset is rejected rather than honoured for
+ * the remaining weeks of its 30-day expiry.
+ */
 export async function requireAuth(
   req: Request,
 ): Promise<SessionPayload | NextResponse> {
   const session = await getSessionFromRequest(req);
   if (!session) {
     return apiError("Authentication required", 401, { code: "UNAUTHENTICATED" });
+  }
+  if (!(await assertCurrentSession(session))) {
+    return apiError("Your session has expired. Please sign in again.", 401, {
+      code: "SESSION_REVOKED",
+    });
   }
   return session;
 }
@@ -94,14 +110,16 @@ export async function parseBody<S extends z.ZodType>(
 /**
  * Applies a rate limit and returns a 429 response when exceeded.
  * On success returns null so callers can `if (limited) return limited;`.
+ *
+ * Async since the counters moved into Redis — every call site must `await`.
  */
-export function enforceRateLimit(
+export async function enforceRateLimit(
   req: Request,
   limit: number,
   windowMs: number,
   message = "Too many requests. Please slow down.",
-): NextResponse | null {
-  const result: RateLimitResult = rateLimit(req, limit, windowMs);
+): Promise<NextResponse | null> {
+  const result: RateLimitResult = await rateLimit(req, limit, windowMs);
   if (result.success) return null;
 
   const retryAfter = Math.max(1, Math.ceil((result.reset - Date.now()) / 1000));
@@ -121,11 +139,42 @@ export function enforceRateLimit(
 /**
  * Logs an unexpected error with a stable route tag and returns a generic 500.
  * Keeps stack traces out of the client response.
+ *
+ * The response carries the request id so a user reporting "it just said
+ * internal server error" hands you the string that finds the log line. Pass
+ * `req` to get one; without it the error is still logged, just uncorrelated.
  */
-export function handleUnexpected(route: string, error: unknown): NextResponse {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`[api:${route}]`, message, error);
-  return apiError("Internal server error", 500, { code: "INTERNAL_ERROR" });
+export function handleUnexpected(
+  route: string,
+  error: unknown,
+  req?: Request,
+): NextResponse {
+  const requestId = req ? requestIdFor(req) : undefined;
+
+  log.error("unhandled error", error, { scope: `api:${route}`, requestId });
+  reportError(error, { scope: `api:${route}`, requestId });
+
+  return apiError("Internal server error", 500, {
+    code: "INTERNAL_ERROR",
+    ...(requestId ? { details: { requestId } } : {}),
+  });
+}
+
+/**
+ * A stable id for one request.
+ *
+ * Reuses whatever the proxy in front already assigned, so a line here can be
+ * matched to the same request in the load balancer's logs. Vercel, Fly and
+ * Cloudflare each set one of these; anything else gets a fresh uuid.
+ */
+export function requestIdFor(req: Request): string {
+  return (
+    req.headers.get("x-request-id") ??
+    req.headers.get("x-vercel-id") ??
+    req.headers.get("fly-request-id") ??
+    req.headers.get("cf-ray") ??
+    crypto.randomUUID()
+  );
 }
 
 // ── Legacy validation helpers (still referenced by the auth routes) ─────────

@@ -53,11 +53,17 @@ export const Navbar: React.FC = () => {
   const accountRef = useRef<HTMLDivElement>(null);
 
   // Close transient UI on navigation.
-  useEffect(() => {
+  //
+  // Adjusted during render rather than in an effect: React re-runs this pass
+  // before touching the DOM, so the menus never paint open on the new page.
+  // An effect would close them a frame late, and would be an extra render.
+  const [pathAtRender, setPathAtRender] = useState(pathname);
+  if (pathAtRender !== pathname) {
+    setPathAtRender(pathname);
     setMenuOpen(false);
     setAccountOpen(false);
     setSearchOpen(false);
-  }, [pathname]);
+  }
 
   // Lock scroll behind the mobile sheet.
   useEffect(() => {
@@ -96,10 +102,11 @@ export const Navbar: React.FC = () => {
 
   // Poll for a duel the user left open in another tab.
   useEffect(() => {
-    if (!user) {
-      setActiveRoom(null);
-      return;
-    }
+    // Nothing to poll while signed out. The banner is gated on `user` at
+    // render time too, so a stale room from a previous session can't show —
+    // clearing it here would only be a synchronous setState in an effect.
+    if (!user) return;
+
     let cancelled = false;
 
     const check = async () => {
@@ -135,7 +142,7 @@ export const Navbar: React.FC = () => {
   );
 
   const inRoom = pathname.startsWith("/arena") || pathname.startsWith("/room");
-  const showActiveBanner = Boolean(activeRoom) && !inRoom;
+  const showActiveBanner = Boolean(user) && Boolean(activeRoom) && !inRoom;
 
   return (
     <>

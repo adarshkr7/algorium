@@ -69,6 +69,13 @@ export function useArena(code: string) {
     finishedRef.current = isFinished;
   }, [isFinished]);
 
+  /**
+   * `evaluate` is defined below but needed by the realtime subscription above
+   * it. Holding it in a ref keeps the subscription from tearing down and
+   * re-establishing every time the callback identity changes.
+   */
+  const evaluateRef = useRef<(() => Promise<void>) | null>(null);
+
   const mergeSubmission = useCallback((incoming: ArenaSubmission) => {
     setSubmissions((prev) => {
       const key = incoming.id || incoming.cfSubmissionId;
@@ -164,6 +171,11 @@ export function useArena(code: string) {
           setLoadError("That room doesn't exist.");
           return;
         }
+        // The room endpoint is authenticated; retrying won't produce a session.
+        if (status === 401) {
+          setLoadError("Sign in to view this contest.");
+          return;
+        }
         retry = setTimeout(load, RELOAD_BACKOFF_MS);
       }
     };
@@ -241,8 +253,13 @@ export function useArena(code: string) {
           return prevProblems;
         });
       })
-      .on("broadcast", { event: "contest-finished" }, ({ payload }) => {
-        applyFinish(payload as WinnerInfo);
+      // The payload is deliberately ignored. Broadcasts arrive on a public
+      // channel that anyone holding the publishable key can write to, so
+      // rendering a result straight from one let a stranger declare a winner
+      // in someone else's duel. Treat the event as "something changed" and go
+      // ask the server, which checks membership and reads the real standings.
+      .on("broadcast", { event: "contest-finished" }, () => {
+        void evaluateRef.current?.();
       })
       .on("broadcast", { event: "rematch-ready" }, ({ payload }) => {
         const invite = payload as RematchInvite;
@@ -256,7 +273,7 @@ export function useArena(code: string) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [code, supabase, toast, mergeSubmission, applyFinish]);
+  }, [code, supabase, toast, mergeSubmission]);
 
   // ── Countdown ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -321,6 +338,10 @@ export function useArena(code: string) {
   }, [applyFinish]);
 
   useEffect(() => {
+    evaluateRef.current = evaluate;
+  }, [evaluate]);
+
+  useEffect(() => {
     if (isFinished || !room?.contest || room.contest.status !== "IN_PROGRESS") {
       return;
     }
@@ -342,14 +363,20 @@ export function useArena(code: string) {
 
   // Standings are pushed over realtime, but compute locally as a fallback so
   // the scoreboard is never blank.
+  //
+  // `contest` is hoisted out rather than written as `room?.contest` in the
+  // dependency list: the optional chain there reads as a different expression
+  // from the `room.contest` inside, which stopped the React Compiler from
+  // preserving this memo at all.
+  const contest = room?.contest ?? null;
   const localStandings = useMemo(() => {
-    if (!room?.contest) return null;
+    if (!contest) return null;
     return calculateStandings(
-      { ...room.contest, problems, submissions },
+      { ...contest, problems, submissions },
       player1,
       player2,
     );
-  }, [room?.contest, problems, submissions, player1, player2]);
+  }, [contest, problems, submissions, player1, player2]);
 
   const effectiveStandings = standings ?? localStandings;
 

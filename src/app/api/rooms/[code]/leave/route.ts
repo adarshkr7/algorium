@@ -84,11 +84,59 @@ export async function POST(
       return apiSuccess({ success: true, outcome: "resigned" });
     }
 
-    // ── Pre-contest: cancel the room ───────────────────────────────────────
     const leaver = await prisma.user.findUnique({
       where: { id: userId },
       select: { handle: true },
     });
+
+    // ── Pre-contest: a guest vacates, the host cancels ─────────────────────
+    //
+    // Leaving used to cancel the room whoever did it, which meant anyone who
+    // joined a public duel could destroy the host's room on the way out — one
+    // click, and the host is back to square one. Only the person who owns the
+    // room gets to close it; everyone else just gives their seat back.
+    if (room.hostId !== userId) {
+      await prisma.$transaction(async (tx) => {
+        await tx.room.update({
+          where: { id: room.id },
+          data: {
+            // A player-hosted room seats the guest in both `guest` and
+            // `player2`, so clear whichever seats this user actually holds.
+            guestId: room.guestId === userId ? null : undefined,
+            player1Id: room.player1Id === userId ? null : undefined,
+            player2Id: room.player2Id === userId ? null : undefined,
+          },
+        });
+
+        if (room.contest) {
+          // Drops their media state with them, so a proctored room does not
+          // keep waiting on a camera that left.
+          await tx.participant.deleteMany({
+            where: { contestId: room.contest.id, userId },
+          });
+        }
+
+        // Joining a best-of room also seats you in the series. Give that back
+        // too, but only while the series is still scoreless — once a game has
+        // been played the opponent is a matter of record.
+        if (room.seriesId) {
+          await tx.matchSeries.updateMany({
+            where: {
+              id: room.seriesId,
+              player2Id: userId,
+              player1Wins: 0,
+              player2Wins: 0,
+              draws: 0,
+            },
+            data: { player2Id: null },
+          });
+        }
+      });
+
+      // The lobby polls every few seconds, so the host sees the seat free up
+      // without a dedicated event.
+      return apiSuccess({ success: true, outcome: "left" });
+    }
 
     await prisma.$transaction([
       prisma.room.update({
@@ -111,6 +159,6 @@ export async function POST(
 
     return apiSuccess({ success: true, outcome: "cancelled" });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/leave", error);
+    return handleUnexpected("rooms/[code]/leave", error, req);
   }
 }

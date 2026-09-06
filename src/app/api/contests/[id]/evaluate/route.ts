@@ -29,7 +29,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const limited = enforceRateLimit(req, 30, 60_000);
+    const limited = await enforceRateLimit(req, 30, 60_000);
     if (limited) return limited;
 
     const session = await requireAuth(req);
@@ -86,6 +86,6 @@ export async function POST(
       winnerInfo,
     });
   } catch (error) {
-    return handleUnexpected("contests/[id]/evaluate", error);
+    return handleUnexpected("contests/[id]/evaluate", error, req);
   }
 }

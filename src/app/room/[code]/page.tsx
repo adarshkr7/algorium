@@ -178,11 +178,19 @@ export default function RoomLobbyPage({
   }, [code, router, user]);
 
   useEffect(() => {
-    if (sessionLoading) return;
+    // The room endpoint is authenticated, so there is nothing to fetch until
+    // the session resolves to a signed-in user. The signed-out case is handled
+    // at render rather than by writing an error into state from here.
+    if (sessionLoading || !user) return;
+
+    // `loadRoom` is async and its first statement is the `await` on the fetch,
+    // so nothing here sets state synchronously; the rule cannot see past the
+    // async boundary. Fetching on mount and polling is what effects are for.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadRoom();
     const id = setInterval(() => void loadRoom(), POLL_MS);
     return () => clearInterval(id);
-  }, [loadRoom, sessionLoading]);
+  }, [loadRoom, sessionLoading, user]);
 
   // ── Realtime: presence + lifecycle events ────────────────────────────────
   useEffect(() => {
@@ -310,6 +318,15 @@ export default function RoomLobbyPage({
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
+  if (!sessionLoading && !user) {
+    return (
+      <ErrorScreen
+        title="Sign in to view this room"
+        message="Room details are only visible to signed-in players."
+      />
+    );
+  }
+
   if (sessionLoading || loading) {
     return (
       <LoadingScreen

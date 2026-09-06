@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Dices, Globe, Mic, Sparkles, Swords, Video } from "lucide-react";
 import { useUser } from "@/context/UserContext";
@@ -133,16 +133,23 @@ function CreateDuelForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // A practice run or a supervised room can't be part of a series, and a
-  // practice run has nobody to show a camera to.
-  useEffect(() => {
-    if (format !== "PLAYER" && bestOf !== "1") setBestOf("1");
-    if (format === "SOLO") {
-      if (isPublic) setIsPublic(false);
-      if (requireVideo) setRequireVideo(false);
-      if (requireAudio) setRequireAudio(false);
+  /**
+   * A practice run or a supervised room can't be part of a series, and a
+   * practice run has nobody to show a camera to.
+   *
+   * Done here rather than in an effect that watched every one of these:
+   * changing the format is the only thing that can invalidate them, and the
+   * effect re-ran on each toggle just to decide it had nothing to do.
+   */
+  const changeFormat = (next: Format) => {
+    setFormat(next);
+    if (next !== "PLAYER") setBestOf("1");
+    if (next === "SOLO") {
+      setIsPublic(false);
+      setRequireVideo(false);
+      setRequireAudio(false);
     }
-  }, [format, bestOf, isPublic, requireVideo, requireAudio]);
+  };
 
   const mediaRequired = requireVideo || requireAudio;
 
@@ -321,7 +328,7 @@ function CreateDuelForm() {
             <Field label="Format">
               <SegmentedControl
                 value={format}
-                onChange={setFormat}
+                onChange={changeFormat}
                 options={FORMAT_OPTIONS}
                 ariaLabel="Room format"
               />

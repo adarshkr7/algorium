@@ -82,21 +82,48 @@ enum SeriesStatus {
 // ── Models ──
 
 model User {
-  id                String    @id @default(uuid())
-  handle            String    @unique
-  avatar            String
-  rating            Int       @default(0)
-  maxRating         Int       @default(0)
-  rank              String    @default("unrated")
-  maxRank           String    @default("unrated")
-  wins              Int       @default(0)
-  losses            Int       @default(0)
-  draws             Int       @default(0)
-  createdAt         DateTime  @default(now())
-  email             String?   @unique
-  passwordHash      String?
-  verificationToken String?
-  tokenExpiresAt    DateTime?
+  id           String   @id @default(uuid())
+  handle       String   @unique
+  avatar       String
+  rating       Int      @default(0)
+  maxRating    Int      @default(0)
+  rank         String   @default("unrated")
+  maxRank      String   @default("unrated")
+  wins         Int      @default(0)
+  losses       Int      @default(0)
+  draws        Int      @default(0)
+  createdAt    DateTime @default(now())
+  email        String?  @unique
+  passwordHash String?
+
+  /// Bumped whenever every existing session should stop working — a password
+  /// reset, or a password set through the registration flow. The signed
+  /// session carries the version it was minted at, so a cookie that was stolen
+  /// before the reset dies with it. Stateless JWTs otherwise stay valid for
+  /// their full 30 days no matter what the account owner does.
+  tokenVersion Int      @default(0)
+
+  // ── Verification state ──
+  // These were one overloaded `verificationToken` column holding three
+  // unrelated secrets in turn: the Codeforces proof problem, the
+  // "SET_PASSWORD_<uuid>" grant, and the password-reset OTP. Starting any one
+  // flow silently destroyed another one in progress, and pooling them meant
+  // the reset OTP sat in the same column that room payloads serialised.
+
+  /// Codeforces ownership proof — the problem ("231A") the user must produce a
+  /// COMPILATION_ERROR on.
+  cfVerifyProblem        String?
+  cfVerifyExpiresAt      DateTime?
+  /// Short-lived grant issued once the proof lands, authorising a password set.
+  passwordSetupToken     String?
+  passwordSetupExpiresAt DateTime?
+  /// Password-reset code, stored as a bcrypt hash: a six-digit code is only
+  /// 10^6 wide, so a readable copy is as good as the code itself.
+  resetOtpHash           String?
+  resetOtpExpiresAt      DateTime?
+  /// Per-account guess counter. IP rate limiting alone doesn't stop someone
+  /// spreading 10^6 guesses across addresses.
+  resetOtpAttempts       Int       @default(0)
 
   /// Algorium duel rating — independent of the Codeforces rating.
   elo           Int      @default(1200)

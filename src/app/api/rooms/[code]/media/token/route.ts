@@ -29,7 +29,7 @@ export async function POST(
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    const limited = enforceRateLimit(req, 20, 60_000);
+    const limited = await enforceRateLimit(req, 20, 60_000);
     if (limited) return limited;
 
     const session = await requireAuth(req);
@@ -103,6 +103,6 @@ export async function POST(
       canPublish: isContestant(participant.role),
     });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/media/token", error);
+    return handleUnexpected("rooms/[code]/media/token", error, req);
   }
 }

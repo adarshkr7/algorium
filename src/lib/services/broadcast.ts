@@ -78,11 +78,91 @@ export interface ContestFinishedPayload {
 }
 
 /**
- * Thin wrapper over a Supabase realtime channel scoped to one room.
+ * One Supabase client for the whole process.
  *
- * The client and channel are created once per instance rather than once per
- * message — the previous implementation allocated a new channel on every send,
- * which leaked channel objects during a busy contest.
+ * Every broadcast used to build its own: the room routes, the evaluator (once
+ * per live contest per 5s tick) and the finaliser each called `createClient`,
+ * and six of the eight call sites never disposed the result. Nothing here
+ * subscribes — these are fire-and-forget sends — so a single client is all the
+ * server ever needs, and the worker stops accumulating them for the life of
+ * the process.
+ */
+const globalForBroadcast = globalThis as unknown as {
+  broadcastClient?: SupabaseClient;
+};
+
+function sharedClient(): SupabaseClient {
+  if (globalForBroadcast.broadcastClient) return globalForBroadcast.broadcastClient;
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+  if (!url || !key) {
+    throw new Error(
+      "Supabase env vars missing: NEXT_PUBLIC_SUPABASE_URL and " +
+        "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY are required for realtime.",
+    );
+  }
+
+  // Nothing on the server signs in or listens, so the auth machinery is dead
+  // weight — and its refresh timer would keep a worker process from idling.
+  const client = createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+  globalForBroadcast.broadcastClient = client;
+  return client;
+}
+
+/**
+ * `httpSend` needs Realtime server v2.97.0 or newer and answers 404 below
+ * that. Probe once, then remember, rather than paying a failed round trip per
+ * message on an older project.
+ */
+let httpSendUsable = true;
+
+/**
+ * Channels, reused per topic.
+ *
+ * `client.channel(name)` mints a new object every call and registers it on the
+ * client, so constructing a service per broadcast — which is what every call
+ * site does — grew that registry forever inside the worker. Nothing here
+ * subscribes, so one channel per topic is enough and can be shared.
+ *
+ * Capped because room codes are unbounded over a process's lifetime. Evicting
+ * the oldest is safe: the next broadcast to that room simply mints a fresh one.
+ */
+const MAX_CACHED_CHANNELS = 200;
+const channelCache = new Map<string, RealtimeChannel>();
+
+function channelFor(client: SupabaseClient, name: string): RealtimeChannel {
+  const cached = channelCache.get(name);
+  if (cached) {
+    // Refresh insertion order so busy rooms survive eviction.
+    channelCache.delete(name);
+    channelCache.set(name, cached);
+    return cached;
+  }
+
+  if (channelCache.size >= MAX_CACHED_CHANNELS) {
+    const oldest = channelCache.keys().next();
+    if (!oldest.done) {
+      const stale = channelCache.get(oldest.value);
+      channelCache.delete(oldest.value);
+      if (stale) void client.removeChannel(stale).catch(() => {});
+    }
+  }
+
+  const channel = client.channel(name);
+  channelCache.set(name, channel);
+  return channel;
+}
+
+/**
+ * Thin wrapper over a Supabase realtime channel scoped to one room.
  */
 export class BroadcastService {
   private supabase: SupabaseClient;
@@ -95,25 +175,38 @@ export class BroadcastService {
    * rather than made to share one topic.
    */
   constructor(roomCode: string, suffix?: string) {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-    if (!url || !key) {
-      throw new Error(
-        "Supabase env vars missing: NEXT_PUBLIC_SUPABASE_URL and " +
-          "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY are required for realtime.",
-      );
-    }
-
-    this.supabase = createClient(url, key);
+    this.supabase = sharedClient();
     const base = `room-${roomCode.toUpperCase()}`;
     this.channelName = suffix ? `${base}-${suffix}` : base;
-    this.channel = this.supabase.channel(this.channelName);
+    this.channel = channelFor(this.supabase, this.channelName);
   }
 
-  /** Never let a realtime hiccup break the request or the worker loop. */
+  /**
+   * Never let a realtime hiccup break the request or the worker loop.
+   *
+   * Uses `httpSend` rather than `send`. The server never subscribes its
+   * channels, so `send` silently fell back to the REST endpoint anyway — and
+   * warned, on every single message, that the fallback is being removed.
+   */
   private async emit(event: string, payload: unknown): Promise<void> {
     try {
+      if (httpSendUsable) {
+        try {
+          await this.channel.httpSend(event, payload);
+          return;
+        } catch (error) {
+          // Only a version mismatch should disable the fast path permanently;
+          // a transient failure falls through to `send` for this message.
+          if (error instanceof Error && error.message.includes("v2.97.0")) {
+            httpSendUsable = false;
+            console.warn(
+              "[broadcast] Realtime server predates httpSend; using the " +
+                "deprecated send() fallback for the rest of this process.",
+            );
+          }
+        }
+      }
+
       await this.channel.send({ type: "broadcast", event, payload });
     } catch (error) {
       console.error(
@@ -211,8 +304,15 @@ export class BroadcastService {
     });
   }
 
-  /** Releases the underlying realtime socket. */
+  /**
+   * Drops this room's channel.
+   *
+   * Optional now — channels are pooled and capped, so letting an instance go
+   * out of scope no longer leaks. Call it when a room is finished with and you
+   * want the slot back sooner.
+   */
   async dispose(): Promise<void> {
+    channelCache.delete(this.channelName);
     try {
       await this.supabase.removeChannel(this.channel);
     } catch {

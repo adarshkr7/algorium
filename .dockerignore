@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.github
+.claude
+.vercel
+
+# Secrets must never reach an image layer. The build takes what it needs
+# through --build-arg and the runtime through the environment.
+.env
+.env.*
+!.env.example
+
+*.tsbuildinfo
+npm-debug.log*
+coverage
+README.md

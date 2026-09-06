@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { CFSubmission } from "@/lib/codeforces";
 import { BroadcastService } from "./broadcast";
+import { PUBLIC_USER_SELECT } from "./room-service";
 
 interface ProcessableUser {
   id: string;
@@ -106,7 +107,7 @@ export async function processUserSubs(
         passedTestCount: sub.passedTestCount || 0,
         solveTimeSeconds: verdict === "OK" ? solveTimeSeconds : null,
       },
-      include: { user: true, problem: true },
+      include: { user: { select: PUBLIC_USER_SELECT }, problem: true },
     });
 
     existingSubsMap.set(sub.id, { id: record.id, verdict: record.verdict });

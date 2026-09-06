@@ -4,6 +4,8 @@ import {
   EVALUATION_INCLUDE,
 } from "../lib/services/contest-evaluator";
 import { sweepMediaCompliance } from "../lib/services/media-enforcer";
+import { holdLease, releaseLease } from "../lib/leader-lock";
+import { log } from "../lib/logger";
 
 /**
  * Background engine that keeps live contests in sync with Codeforces.
@@ -16,6 +18,14 @@ const POLL_INTERVAL_MS = 5_000;
 const IDLE_INTERVAL_MS = 15_000;
 /** Cap concurrent contest passes so a busy night can't exhaust CF rate limits. */
 const MAX_CONCURRENT = 4;
+
+const SCOPE = "worker:eval";
+const LEASE_NAME = "arena-evaluator";
+/**
+ * Long enough that a slow pass does not hand the lease to a peer mid-tick,
+ * short enough that a crashed leader is replaced within a few seconds.
+ */
+const LEASE_TTL_MS = 45_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -64,21 +74,40 @@ async function mediaTick(): Promise<number> {
   try {
     return await sweepMediaCompliance();
   } catch (error) {
-    console.error("[arena-evaluator] media sweep failed:", error);
+    log.error("media sweep failed", error, { scope: SCOPE });
     return 0;
   }
 }
 
 async function run(): Promise<void> {
-  console.log("[arena-evaluator] started");
+  log.info("started", { scope: SCOPE });
+
+  let wasLeader = false;
 
   while (running) {
+    // Only one replica evaluates. Two would poll Codeforces for the same
+    // contests on the same tick, which is precisely the traffic MAX_CONCURRENT
+    // exists to bound.
+    const lease = await holdLease(LEASE_NAME, LEASE_TTL_MS);
+    if (!lease.granted) {
+      if (wasLeader) {
+        log.info("lease lost; standing by", { scope: SCOPE });
+        wasLeader = false;
+      }
+      await sleep(IDLE_INTERVAL_MS);
+      continue;
+    }
+    if (!wasLeader && !lease.degraded) {
+      log.info("holding the evaluation lease", { scope: SCOPE });
+    }
+    wasLeader = true;
+
     let activeCount = 0;
     let mediaCount = 0;
     try {
       activeCount = await tick();
     } catch (error) {
-      console.error("[arena-evaluator] loop error:", error);
+      log.error("loop error", error, { scope: SCOPE });
     }
     mediaCount = await mediaTick();
 
@@ -87,12 +116,13 @@ async function run(): Promise<void> {
     await sleep(busy ? POLL_INTERVAL_MS : IDLE_INTERVAL_MS);
   }
 
+  await releaseLease(LEASE_NAME);
   await prisma.$disconnect();
-  console.log("[arena-evaluator] stopped");
+  log.info("stopped", { scope: SCOPE });
 }
 
 function shutdown(signal: string) {
-  console.log(`[arena-evaluator] ${signal} received, finishing current pass…`);
+  log.info("shutting down after the current pass", { scope: SCOPE, signal });
   running = false;
 }
 
@@ -100,6 +130,6 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 run().catch((error) => {
-  console.error("[arena-evaluator] fatal:", error);
+  log.error("fatal", error, { scope: SCOPE });
   process.exit(1);
 });

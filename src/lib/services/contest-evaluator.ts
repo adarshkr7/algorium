@@ -5,6 +5,7 @@ import { BroadcastService } from "./broadcast";
 import { finishContest, type FinishResult } from "./contest-finalizer";
 import { processUserSubs } from "./submission-processor";
 import { calculateStandings, determineWinner, type Standings } from "./standings";
+import { PUBLIC_USER_SELECT, ROOM_PLAYERS_INCLUDE } from "./room-service";
 
 /**
  * One shared evaluation pass, used by both the background worker and the
@@ -15,12 +16,12 @@ import { calculateStandings, determineWinner, type Standings } from "./standings
  */
 
 export const EVALUATION_INCLUDE = {
-  room: {
-    include: { host: true, guest: true, player1: true, player2: true, series: true },
-  },
+  room: { include: ROOM_PLAYERS_INCLUDE },
   problems: { orderBy: { indexInContest: "asc" } },
-  participants: { include: { user: true } },
-  submissions: { include: { user: true, problem: true } },
+  participants: { include: { user: { select: PUBLIC_USER_SELECT } } },
+  submissions: {
+    include: { user: { select: PUBLIC_USER_SELECT }, problem: true },
+  },
 } satisfies Prisma.ContestInclude;
 
 export type EvaluableContest = Prisma.ContestGetPayload<{

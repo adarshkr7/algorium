@@ -20,6 +20,6 @@ export async function GET(req: Request) {
     const room = await findActiveRoomForUser(session.userId);
     return apiSuccess({ room });
   } catch (error) {
-    return handleUnexpected("users/active-room", error);
+    return handleUnexpected("users/active-room", error, req);
   }
 }

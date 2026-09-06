@@ -31,7 +31,7 @@ export async function POST(
   try {
     // Devices flap (a laptop lid, a reconnect), so this is chattier than most
     // routes — but not unboundedly so.
-    const limited = enforceRateLimit(req, 60, 60_000);
+    const limited = await enforceRateLimit(req, 60, 60_000);
     if (limited) return limited;
 
     const session = await requireAuth(req);
@@ -102,6 +102,6 @@ export async function POST(
       },
     });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/media/state", error);
+    return handleUnexpected("rooms/[code]/media/state", error, req);
   }
 }

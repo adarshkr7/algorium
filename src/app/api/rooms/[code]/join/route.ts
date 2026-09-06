@@ -15,6 +15,7 @@ import {
   findActiveRoomForUser,
 } from "@/lib/services/room-service";
 import { BroadcastService } from "@/lib/services/broadcast";
+import { log } from "@/lib/logger";
 
 /**
  * POST /api/rooms/[code]/join
@@ -28,7 +29,7 @@ export async function POST(
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    const limited = enforceRateLimit(req, 30, 60_000);
+    const limited = await enforceRateLimit(req, 30, 60_000);
     if (limited) return limited;
 
     const session = await requireAuth(req);
@@ -175,7 +176,10 @@ export async function POST(
         } catch (error) {
           // A CF outage here should not block the join — the contest can still
           // run with the original problem set.
-          console.error("[rooms/join] problem re-verification failed:", error);
+          log.error("problem re-verification failed", error, {
+            scope: "api:rooms/[code]/join",
+            code,
+          });
         }
       }
     }
@@ -191,7 +195,7 @@ export async function POST(
 
     return apiSuccess({ room: finalRoom, joined: true });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/join", error);
+    return handleUnexpected("rooms/[code]/join", error, req);
   }
 }
 
