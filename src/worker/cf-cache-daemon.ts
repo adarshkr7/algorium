@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { fetchCFUserSolvedKeys } from "../lib/codeforces";
 import { hasCachedUserSubmissions } from "../lib/redis";
+import { holdLease, releaseLease } from "../lib/leader-lock";
 
 /**
  * Warms the Redis cache of solved-problem keys so contest generation does not
@@ -18,6 +19,10 @@ const REQUEST_SPACING_MS = 2_000;
 const ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** Upper bound on API calls per cycle, to stay well inside CF rate limits. */
 const MAX_SYNCS_PER_CYCLE = 200;
+
+const LEASE_NAME = "cf-cache-daemon";
+/** Covers a whole sync cycle, which paces itself at one request every 2s. */
+const LEASE_TTL_MS = MAX_SYNCS_PER_CYCLE * REQUEST_SPACING_MS + 60_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -68,6 +73,14 @@ async function run(): Promise<void> {
   console.log("[cf-cache] started");
 
   while (running) {
+    // One replica warms the cache. Two would double this daemon's Codeforces
+    // traffic to rebuild caches the other has already written.
+    const lease = await holdLease(LEASE_NAME, LEASE_TTL_MS);
+    if (!lease.granted) {
+      await sleep(60_000);
+      continue;
+    }
+
     try {
       await syncCycle();
     } catch (error) {
@@ -81,6 +94,7 @@ async function run(): Promise<void> {
     }
   }
 
+  await releaseLease(LEASE_NAME);
   await prisma.$disconnect();
   console.log("[cf-cache] stopped");
 }

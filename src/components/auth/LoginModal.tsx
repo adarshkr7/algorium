@@ -58,6 +58,11 @@ export function LoginModal({
 
   const expiresAtRef = useRef<number | null>(null);
 
+  /**
+   * State only — no ref writes, so this is safe to call while rendering.
+   * `expiresAtRef` needs no clearing here: the countdown that reads it is
+   * gated on `step === "verify"`, and step goes back to "handle" below.
+   */
   const reset = () => {
     setStep("handle");
     setHandleInput("");
@@ -69,12 +74,17 @@ export function LoginModal({
     setSecondsLeft(null);
     setError(null);
     setLoading(false);
-    expiresAtRef.current = null;
   };
 
-  useEffect(() => {
+  // Clear the form on close, so reopening starts at step one rather than
+  // showing the last attempt's handle and error. Adjusted during render for
+  // the same reason as the navbar's menus: an effect would do this a paint
+  // later, and re-render the whole modal to get there.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (!open) reset();
-  }, [open]);
+  }
 
   // Countdown for the verification window.
   useEffect(() => {

@@ -1,3 +1,5 @@
+// @runtime client — this suite pulls in the Supabase browser client, which
+// is marked `client-only` and throws under the react-server condition.
 import { collectReportableSuspects } from "./useMedia";
 import type { MediaSnapshot } from "@/lib/services/broadcast";
 

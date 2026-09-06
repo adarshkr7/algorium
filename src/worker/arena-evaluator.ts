@@ -4,6 +4,7 @@ import {
   EVALUATION_INCLUDE,
 } from "../lib/services/contest-evaluator";
 import { sweepMediaCompliance } from "../lib/services/media-enforcer";
+import { holdLease, releaseLease } from "../lib/leader-lock";
 
 /**
  * Background engine that keeps live contests in sync with Codeforces.
@@ -16,6 +17,13 @@ const POLL_INTERVAL_MS = 5_000;
 const IDLE_INTERVAL_MS = 15_000;
 /** Cap concurrent contest passes so a busy night can't exhaust CF rate limits. */
 const MAX_CONCURRENT = 4;
+
+const LEASE_NAME = "arena-evaluator";
+/**
+ * Long enough that a slow pass does not hand the lease to a peer mid-tick,
+ * short enough that a crashed leader is replaced within a few seconds.
+ */
+const LEASE_TTL_MS = 45_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -72,7 +80,26 @@ async function mediaTick(): Promise<number> {
 async function run(): Promise<void> {
   console.log("[arena-evaluator] started");
 
+  let wasLeader = false;
+
   while (running) {
+    // Only one replica evaluates. Two would poll Codeforces for the same
+    // contests on the same tick, which is precisely the traffic MAX_CONCURRENT
+    // exists to bound.
+    const lease = await holdLease(LEASE_NAME, LEASE_TTL_MS);
+    if (!lease.granted) {
+      if (wasLeader) {
+        console.log("[arena-evaluator] lease lost; standing by");
+        wasLeader = false;
+      }
+      await sleep(IDLE_INTERVAL_MS);
+      continue;
+    }
+    if (!wasLeader && !lease.degraded) {
+      console.log("[arena-evaluator] holding the evaluation lease");
+    }
+    wasLeader = true;
+
     let activeCount = 0;
     let mediaCount = 0;
     try {
@@ -87,6 +114,7 @@ async function run(): Promise<void> {
     await sleep(busy ? POLL_INTERVAL_MS : IDLE_INTERVAL_MS);
   }
 
+  await releaseLease(LEASE_NAME);
   await prisma.$disconnect();
   console.log("[arena-evaluator] stopped");
 }

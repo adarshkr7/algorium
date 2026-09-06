@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useMounted } from "@/lib/use-mounted";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "./Button";
@@ -42,8 +43,7 @@ export function Modal({
   dismissible = true,
   className,
 }: ModalProps) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   const handleClose = useCallback(() => {
     if (dismissible) onClose?.();

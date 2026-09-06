@@ -58,7 +58,7 @@ Open <http://localhost:3000>.
 | `npm run start:workers` | Both workers without the dev server, for a separate process in production |
 | `npm run build`         | Production build                                                          |
 | `npm run typecheck`     | `tsc --noEmit`                                                            |
-| `npm test`              | Unit tests for the media policy and the rate-limit window                 |
+| `npm test`              | Every `*.test.mts` under `src/` — scoring, Elo, media policy, rate limits |
 | `npm run lint`          | ESLint                                                                    |
 | `npm run db:push`       | Push the schema without creating a migration                              |
 | `npm run db:migrate`    | Create and apply a migration                                              |
@@ -392,7 +392,7 @@ always taken from the session, never from the request body.
 | GET    | `/api/rooms/[code]`           | yes  | 120 / min  | Full room state; non-members get it without the submission feed |
 | POST   | `/api/rooms/[code]/join`      | yes  | 30 / min   | Take a free slot                                            |
 | POST   | `/api/rooms/[code]/start`     | yes  | —          | Host only; starts the clock                                 |
-| POST   | `/api/rooms/[code]/leave`     | yes  | —          | Cancels before the start, resigns after it                  |
+| POST   | `/api/rooms/[code]/leave`     | yes  | —          | Host cancels, guest vacates; after the start it resigns      |
 | POST   | `/api/rooms/[code]/rematch`   | yes  | 10 / min   | Clone a finished room, or continue a series                 |
 | GET    | `/api/rooms/public`           | no   | —          | Open-duels lobby                                            |
 
@@ -528,6 +528,18 @@ submissions — over a public realtime channel.
    `npm run start:workers`. They are infinite loops and will not survive on a
    serverless platform. A small container or a worker dyno is enough; both
    handle `SIGINT` and `SIGTERM` cleanly.
+
+   More than one replica is safe: each worker takes a short Redis lease and
+   only the holder does the work, so a second replica stands by as a warm spare
+   and takes over within a lease period if the first dies. Without Redis there
+   is no election and every replica works — fine for one, wasteful and
+   rate-limit-hungry for more.
+
+   More than one replica is safe: each worker takes a short Redis lease and
+   only the holder does the work, so the second replica stands by as a warm
+   spare and takes over within a lease period if the first dies. Without Redis
+   there is no election and every replica works — fine for one, wasteful and
+   rate-limit-hungry for more.
 5. Point `REDIS_URL` at a managed Redis instance. This is not just about warm
    caches any more: the API rate limits live there, and without it every
    instance counts on its own — which on a serverless host means effectively no
@@ -556,6 +568,10 @@ before that change have none, so everyone signs in one more time.
 
 **Type errors about `elo`, `isSolo`, `series` or `tagMatchMode`** — the
 generated Prisma client is stale. Run `npx prisma generate`.
+
+**`[lease] Redis unreachable — running "arena-evaluator" without leader
+election`** — the workers could not reach Redis and are each doing the work.
+Harmless on a single replica, doubling your Codeforces traffic on more.
 
 **"Attempted to call X from the server"** — a server component is calling a
 plain function exported from a `"use client"` module. Move the function to a

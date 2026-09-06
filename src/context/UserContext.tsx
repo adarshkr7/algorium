@@ -37,6 +37,25 @@ interface UserContextType {
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
+/** "The request failed — hold on to whatever session we already had." */
+const KEEP = Symbol("keep-current-session");
+
+/**
+ * Reads the session without touching state, so the callers below decide when
+ * (and whether) to apply the result.
+ */
+async function fetchSession(): Promise<UserSession | null | typeof KEEP> {
+  try {
+    const res = await fetch("/api/users/me", { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { user: UserSession };
+    return data.user;
+  } catch {
+    // Offline or server down — keep whatever we had rather than signing out.
+    return KEEP;
+  }
+}
+
 export const UserProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -44,24 +63,26 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    try {
-      const res = await fetch("/api/users/me", { cache: "no-store" });
-      if (res.ok) {
-        const data = (await res.json()) as { user: UserSession };
-        setUser(data.user);
-      } else {
-        setUser(null);
-      }
-    } catch {
-      // Offline or server down — keep whatever we had rather than signing out.
-    } finally {
-      setLoading(false);
-    }
+    const next = await fetchSession();
+    if (next !== KEEP) setUser(next);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    // Guarded so a provider that unmounts before the request lands — a fast
+    // navigation away from the first page — doesn't set state afterwards.
+    let cancelled = false;
+
+    void fetchSession().then((next) => {
+      if (cancelled) return;
+      if (next !== KEEP) setUser(next);
+      setLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const logout = useCallback(async () => {
     setUser(null);

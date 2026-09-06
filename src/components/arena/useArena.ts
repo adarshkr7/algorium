@@ -363,14 +363,20 @@ export function useArena(code: string) {
 
   // Standings are pushed over realtime, but compute locally as a fallback so
   // the scoreboard is never blank.
+  //
+  // `contest` is hoisted out rather than written as `room?.contest` in the
+  // dependency list: the optional chain there reads as a different expression
+  // from the `room.contest` inside, which stopped the React Compiler from
+  // preserving this memo at all.
+  const contest = room?.contest ?? null;
   const localStandings = useMemo(() => {
-    if (!room?.contest) return null;
+    if (!contest) return null;
     return calculateStandings(
-      { ...room.contest, problems, submissions },
+      { ...contest, problems, submissions },
       player1,
       player2,
     );
-  }, [room?.contest, problems, submissions, player1, player2]);
+  }, [contest, problems, submissions, player1, player2]);
 
   const effectiveStandings = standings ?? localStandings;
 

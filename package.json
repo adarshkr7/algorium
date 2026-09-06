@@ -12,12 +12,10 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:media": "tsx src/components/arena/useMedia.test.mts",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "postinstall": "prisma generate",
-    "test:ratelimit": "tsx --conditions react-server src/lib/rate-limit.test.mts",
-    "test": "npm run test:media && npm run test:ratelimit"
+    "test": "node scripts/run-tests.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
