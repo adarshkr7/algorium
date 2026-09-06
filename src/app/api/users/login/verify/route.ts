@@ -13,6 +13,7 @@ import {
   parseBody,
 } from "@/lib/api-utils";
 import { LoginVerifySchema } from "@/lib/validation";
+import { log } from "@/lib/logger";
 
 /** The compilation error must be recent, so an old one can't be replayed. */
 const SUBMISSION_WINDOW_SECONDS = 5 * 60;
@@ -74,7 +75,11 @@ export async function POST(req: Request) {
     try {
       submissions = await fetchCFUserSubmissionsStrict(handle, 20);
     } catch (error) {
-      console.error("[users/login/verify] CF unreachable:", error);
+      log.warn("Codeforces unreachable", {
+        scope: "api:users/login/verify",
+        handle,
+        errorMessage: String(error),
+      });
       return apiError(
         "Couldn't reach Codeforces just now. Wait a few seconds and press Verify again.",
         503,
@@ -126,6 +131,6 @@ export async function POST(req: Request) {
 
     return apiSuccess({ step: "register", passwordToken, handle });
   } catch (error) {
-    return handleUnexpected("users/login/verify", error);
+    return handleUnexpected("users/login/verify", error, req);
   }
 }

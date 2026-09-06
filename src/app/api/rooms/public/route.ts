@@ -14,7 +14,7 @@ const LIMIT = 20;
  * Lists rooms whose host ticked "public" and which still have a free slot,
  * so players can join without swapping codes.
  */
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const rooms = await prisma.room.findMany({
       where: {
@@ -34,6 +34,6 @@ export async function GET() {
 
     return apiSuccess({ rooms, count: rooms.length });
   } catch (error) {
-    return handleUnexpected("rooms/public", error);
+    return handleUnexpected("rooms/public", error, req);
   }
 }

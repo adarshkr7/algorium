@@ -156,6 +156,6 @@ export async function POST(
 
     return apiSuccess({ room: updatedRoom, alreadyStarted: false });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/start", error);
+    return handleUnexpected("rooms/[code]/start", error, req);
   }
 }

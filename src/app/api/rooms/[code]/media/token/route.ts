@@ -103,6 +103,6 @@ export async function POST(
       canPublish: isContestant(participant.role),
     });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/media/token", error);
+    return handleUnexpected("rooms/[code]/media/token", error, req);
   }
 }

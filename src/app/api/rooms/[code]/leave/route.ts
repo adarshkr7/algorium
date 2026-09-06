@@ -159,6 +159,6 @@ export async function POST(
 
     return apiSuccess({ success: true, outcome: "cancelled" });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/leave", error);
+    return handleUnexpected("rooms/[code]/leave", error, req);
   }
 }

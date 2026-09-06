@@ -76,6 +76,6 @@ export async function GET(
       },
     });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/media/events", error);
+    return handleUnexpected("rooms/[code]/media/events", error, req);
   }
 }

@@ -68,6 +68,6 @@ export async function POST(req: Request) {
       "Set-Cookie": createSessionCookieHeader(token),
     });
   } catch (error) {
-    return handleUnexpected("users/auth", error);
+    return handleUnexpected("users/auth", error, req);
   }
 }

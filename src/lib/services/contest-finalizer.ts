@@ -14,6 +14,7 @@ import {
   type SeriesSnapshot,
 } from "./broadcast";
 import { PUBLIC_USER_SELECT, ROOM_PLAYERS_INCLUDE } from "./room-service";
+import { log } from "@/lib/logger";
 
 export interface FinishResult {
   winnerId: string | null;
@@ -419,6 +420,6 @@ async function emitFinished(
       series: result.series,
     });
   } catch (error) {
-    console.error("[finishContest] broadcast failed", error);
+    log.error("broadcast failed", error, { scope: "finishContest", roomCode });
   }
 }

@@ -194,6 +194,6 @@ export async function POST(req: Request) {
 
     return apiSuccess({ room, warning: shortfall }, 201);
   } catch (error) {
-    return handleUnexpected("contests/create", error);
+    return handleUnexpected("contests/create", error, req);
   }
 }

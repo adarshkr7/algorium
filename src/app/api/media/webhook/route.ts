@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getWebhookReceiver } from "@/lib/livekit";
 import { recordMediaState } from "@/lib/services/media-policy";
 import { broadcastMediaState } from "@/lib/services/media-broadcast";
+import { log } from "@/lib/logger";
 
 /**
  * POST /api/media/webhook — LiveKit server callbacks.
@@ -36,7 +37,7 @@ export async function POST(req: Request) {
     const auth = req.headers.get("Authorization") ?? "";
     event = await receiver.receive(raw, auth);
   } catch (error) {
-    console.error("[media/webhook] signature rejected", error);
+    log.warn("signature rejected", { scope: "api:media/webhook", errorMessage: String(error) });
     return new Response("Invalid signature", { status: 401 });
   }
 
@@ -119,7 +120,7 @@ export async function POST(req: Request) {
 
     return new Response(null, { status: 204 });
   } catch (error) {
-    console.error("[media/webhook] handler failed", error);
+    log.error("handler failed", error, { scope: "api:media/webhook" });
     // A 500 makes LiveKit retry, which is what we want for a transient fault.
     return new Response("Internal error", { status: 500 });
   }

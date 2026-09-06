@@ -354,9 +354,28 @@ src/
     elo.ts                rating maths
     codeforces.ts         API client with timeouts and retries
     api-utils.ts          response helpers, auth guard, rate limiting
+    rate-limit.ts         Redis-backed windows, in-process fallback
+    leader-lock.ts        worker leader election
+    logger.ts             structured logging and the error-reporter hook
   worker/                 the two background daemons
+  *.test.mts              suites, run by `npm test`
 prisma/schema.prisma
+scripts/run-tests.mjs     test discovery
+Dockerfile                web and workers targets
+docker-compose.yml        full local stack
+.github/workflows/ci.yml  typecheck, lint, test, build
 ```
+
+### Logging
+
+`src/lib/logger.ts` emits one JSON object per line in production and readable
+text in development. `reportError` there is deliberately empty: it is called
+for every unhandled API error, so wiring Sentry or an OTel exporter into that
+one function covers the whole surface without touching a route.
+
+Each 500 carries a `requestId`, reusing the id the proxy already assigned
+(`x-request-id`, `x-vercel-id`, `fly-request-id`, `cf-ray`) so a user's "it
+said internal server error" leads straight to the log line.
 
 ### Styling
 
@@ -394,6 +413,7 @@ always taken from the session, never from the request body.
 | POST   | `/api/rooms/[code]/start`     | yes  | —          | Host only; starts the clock                                 |
 | POST   | `/api/rooms/[code]/leave`     | yes  | —          | Host cancels, guest vacates; after the start it resigns      |
 | POST   | `/api/rooms/[code]/rematch`   | yes  | 10 / min   | Clone a finished room, or continue a series                 |
+| GET    | `/api/health`                 | no   | —          | Liveness for probes; 503 when Postgres is unreachable        |
 | GET    | `/api/rooms/public`           | no   | —          | Open-duels lobby                                            |
 
 ### Proctoring
@@ -549,6 +569,43 @@ If you skip step 4 the app still works, because the arena polls the evaluate
 endpoint, but contests will only be finalised while at least one player has the
 page open.
 
+### Containers
+
+The `Dockerfile` builds both halves from one build stage:
+
+```bash
+docker build --target web     -t algorium-web .
+docker build --target workers -t algorium-workers .
+```
+
+`docker compose up --build` runs web, workers, Postgres and Redis together for
+a local end-to-end stack. Point `DATABASE_URL` elsewhere and drop the
+`postgres` service to run it against a managed database.
+
+`NEXT_PUBLIC_*` values are compiled into the client bundle, so they are build
+args rather than runtime environment — pass the real Supabase URL at build time
+or the browser will call a placeholder.
+
+### Health checks
+
+`GET /api/health` returns 200 while Postgres answers and 503 when it does not,
+which is the signal a load balancer or container probe wants. Redis appears in
+the body as `degraded` but never fails the check: without it the app makes more
+Codeforces calls and rate-limits per process, which is worse but not down.
+
+### Security headers
+
+`next.config.ts` sets HSTS, `nosniff`, `X-Frame-Options`, a referrer policy, a
+`Permissions-Policy` that keeps the camera and microphone available to this
+origin and switches everything else off, and a Content-Security-Policy.
+
+The CSP's `connect-src` is derived from `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_LIVEKIT_URL` at build time, with wildcards covering the managed
+clouds' per-region subdomains. If you add a third-party script, font host or
+API, it must be added there or the browser will silently refuse to load it —
+check the console for a `Refused to connect` line before assuming the code is
+at fault.
+
 ---
 
 ## Troubleshooting
@@ -568,6 +625,10 @@ before that change have none, so everyone signs in one more time.
 
 **Type errors about `elo`, `isSolo`, `series` or `tagMatchMode`** — the
 generated Prisma client is stale. Run `npx prisma generate`.
+
+**"Refused to connect / load ... violates the following Content Security
+Policy directive"** — a new external origin needs adding to the policy in
+`next.config.ts`. The message names the directive that blocked it.
 
 **`[lease] Redis unreachable — running "arena-evaluator" without leader
 election`** — the workers could not reach Redis and are each doing the work.

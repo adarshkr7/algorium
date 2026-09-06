@@ -93,6 +93,6 @@ export async function POST(req: Request) {
       expiresAt: tokenExpiresAt.toISOString(),
     });
   } catch (error) {
-    return handleUnexpected("users/login", error);
+    return handleUnexpected("users/login", error, req);
   }
 }

@@ -234,6 +234,6 @@ export async function POST(
 
     return apiSuccess({ room, created: true }, 201);
   } catch (error) {
-    return handleUnexpected("rooms/[code]/rematch", error);
+    return handleUnexpected("rooms/[code]/rematch", error, req);
   }
 }

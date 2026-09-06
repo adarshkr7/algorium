@@ -102,6 +102,6 @@ export async function POST(
       },
     });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/media/state", error);
+    return handleUnexpected("rooms/[code]/media/state", error, req);
   }
 }

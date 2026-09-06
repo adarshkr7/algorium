@@ -34,7 +34,7 @@ const PROFILE_SELECT = {
  * are looked up on Codeforces and imported on first view.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ handle: string }> },
 ) {
   try {
@@ -130,6 +130,6 @@ export async function GET(
       matchHistory,
     });
   } catch (error) {
-    return handleUnexpected("profile/[handle]", error);
+    return handleUnexpected("profile/[handle]", error, req);
   }
 }

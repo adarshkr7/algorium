@@ -114,6 +114,6 @@ export async function POST(req: Request) {
       message: "Password updated. You can sign in now.",
     });
   } catch (error) {
-    return handleUnexpected("users/forgot-password/reset", error);
+    return handleUnexpected("users/forgot-password/reset", error, req);
   }
 }

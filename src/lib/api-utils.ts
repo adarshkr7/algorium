@@ -8,6 +8,7 @@ import {
   type SessionPayload,
 } from "./auth";
 import { toJsonSafe } from "./json";
+import { log, reportError } from "./logger";
 import { rateLimit, type RateLimitResult } from "./rate-limit";
 
 // ── Standardized API responses ───────────────────────────────────────────────
@@ -138,11 +139,42 @@ export async function enforceRateLimit(
 /**
  * Logs an unexpected error with a stable route tag and returns a generic 500.
  * Keeps stack traces out of the client response.
+ *
+ * The response carries the request id so a user reporting "it just said
+ * internal server error" hands you the string that finds the log line. Pass
+ * `req` to get one; without it the error is still logged, just uncorrelated.
  */
-export function handleUnexpected(route: string, error: unknown): NextResponse {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`[api:${route}]`, message, error);
-  return apiError("Internal server error", 500, { code: "INTERNAL_ERROR" });
+export function handleUnexpected(
+  route: string,
+  error: unknown,
+  req?: Request,
+): NextResponse {
+  const requestId = req ? requestIdFor(req) : undefined;
+
+  log.error("unhandled error", error, { scope: `api:${route}`, requestId });
+  reportError(error, { scope: `api:${route}`, requestId });
+
+  return apiError("Internal server error", 500, {
+    code: "INTERNAL_ERROR",
+    ...(requestId ? { details: { requestId } } : {}),
+  });
+}
+
+/**
+ * A stable id for one request.
+ *
+ * Reuses whatever the proxy in front already assigned, so a line here can be
+ * matched to the same request in the load balancer's logs. Vercel, Fly and
+ * Cloudflare each set one of these; anything else gets a fresh uuid.
+ */
+export function requestIdFor(req: Request): string {
+  return (
+    req.headers.get("x-request-id") ??
+    req.headers.get("x-vercel-id") ??
+    req.headers.get("fly-request-id") ??
+    req.headers.get("cf-ray") ??
+    crypto.randomUUID()
+  );
 }
 
 // ── Legacy validation helpers (still referenced by the auth routes) ─────────

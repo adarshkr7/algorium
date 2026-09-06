@@ -30,6 +30,6 @@ export async function GET(req: Request) {
 
     return apiSuccess({ user });
   } catch (error) {
-    return handleUnexpected("users/me", error);
+    return handleUnexpected("users/me", error, req);
   }
 }

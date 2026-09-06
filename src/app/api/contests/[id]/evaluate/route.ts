@@ -86,6 +86,6 @@ export async function POST(
       winnerInfo,
     });
   } catch (error) {
-    return handleUnexpected("contests/[id]/evaluate", error);
+    return handleUnexpected("contests/[id]/evaluate", error, req);
   }
 }

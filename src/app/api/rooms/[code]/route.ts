@@ -57,6 +57,6 @@ export async function GET(
     // apiSuccess serialises BigInt (Submission.cfSubmissionId) safely.
     return apiSuccess({ room });
   } catch (error) {
-    return handleUnexpected("rooms/[code]", error);
+    return handleUnexpected("rooms/[code]", error, req);
   }
 }

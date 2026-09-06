@@ -121,6 +121,6 @@ export async function POST(req: Request) {
 
     return genericResponse;
   } catch (error) {
-    return handleUnexpected("users/forgot-password/send-otp", error);
+    return handleUnexpected("users/forgot-password/send-otp", error, req);
   }
 }

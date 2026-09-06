@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { fetchCFUserSolvedKeys } from "../lib/codeforces";
 import { hasCachedUserSubmissions } from "../lib/redis";
 import { holdLease, releaseLease } from "../lib/leader-lock";
+import { log } from "../lib/logger";
 
 /**
  * Warms the Redis cache of solved-problem keys so contest generation does not
@@ -20,6 +21,7 @@ const ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** Upper bound on API calls per cycle, to stay well inside CF rate limits. */
 const MAX_SYNCS_PER_CYCLE = 200;
 
+const SCOPE = "worker:cache";
 const LEASE_NAME = "cf-cache-daemon";
 /** Covers a whole sync cycle, which paces itself at one request every 2s. */
 const LEASE_TTL_MS = MAX_SYNCS_PER_CYCLE * REQUEST_SPACING_MS + 60_000;
@@ -41,7 +43,7 @@ async function syncCycle(): Promise<void> {
   const recentlyActive = users.filter((u) => u.lastSeenAt >= activeSince);
   const queue = recentlyActive.length > 0 ? recentlyActive : users;
 
-  console.log(`[cf-cache] cycle start — ${queue.length} candidate handle(s)`);
+  log.info("cycle start", { scope: SCOPE, candidates: queue.length });
 
   let synced = 0;
   let skipped = 0;
@@ -60,17 +62,17 @@ async function syncCycle(): Promise<void> {
       await fetchCFUserSolvedKeys(user.handle);
       synced++;
     } catch (error) {
-      console.error(`[cf-cache] failed for ${user.handle}:`, error);
+      log.error("sync failed", error, { scope: SCOPE, handle: user.handle });
     }
 
     await sleep(REQUEST_SPACING_MS);
   }
 
-  console.log(`[cf-cache] cycle done — synced ${synced}, skipped ${skipped}`);
+  log.info("cycle done", { scope: SCOPE, synced, skipped });
 }
 
 async function run(): Promise<void> {
-  console.log("[cf-cache] started");
+  log.info("started", { scope: SCOPE });
 
   while (running) {
     // One replica warms the cache. Two would double this daemon's Codeforces
@@ -84,7 +86,7 @@ async function run(): Promise<void> {
     try {
       await syncCycle();
     } catch (error) {
-      console.error("[cf-cache] cycle error:", error);
+      log.error("cycle error", error, { scope: SCOPE });
     }
 
     // Sleep in short slices so shutdown is responsive.
@@ -96,11 +98,11 @@ async function run(): Promise<void> {
 
   await releaseLease(LEASE_NAME);
   await prisma.$disconnect();
-  console.log("[cf-cache] stopped");
+  log.info("stopped", { scope: SCOPE });
 }
 
 function shutdown(signal: string) {
-  console.log(`[cf-cache] ${signal} received, winding down…`);
+  log.info("winding down", { scope: SCOPE, signal });
   running = false;
 }
 
@@ -108,6 +110,6 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 run().catch((error) => {
-  console.error("[cf-cache] fatal:", error);
+  log.error("fatal", error, { scope: SCOPE });
   process.exit(1);
 });

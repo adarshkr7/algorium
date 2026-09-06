@@ -38,6 +38,6 @@ export async function POST(
     const acted = await enforceRoomMedia(rawCode.toUpperCase());
     return apiSuccess({ acted });
   } catch (error) {
-    return handleUnexpected("rooms/[code]/media/violation", error);
+    return handleUnexpected("rooms/[code]/media/violation", error, req);
   }
 }

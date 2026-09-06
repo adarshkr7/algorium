@@ -42,6 +42,6 @@ export async function POST(req: Request) {
       201,
     );
   } catch (error) {
-    return handleUnexpected("contact", error);
+    return handleUnexpected("contact", error, req);
   }
 }

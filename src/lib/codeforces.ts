@@ -1,4 +1,5 @@
 import "server-only";
+import { log } from "./logger";
 import { getCachedUserSubmissions, cacheUserSubmissions } from "./redis";
 
 const CF_API = "https://codeforces.com/api";
@@ -140,7 +141,7 @@ export async function fetchCFUserInfo(handle: string): Promise<CFUser | null> {
       maxRank: user.maxRank || "unrated",
     };
   } catch (error) {
-    console.error(`[cf] user.info failed for ${handle}:`, error);
+    log.error("user.info failed", error, { scope: "cf", handle });
     return null;
   }
 }
@@ -157,7 +158,7 @@ export async function fetchCFUserSubmissions(
       { cache: "no-store" },
     );
   } catch (error) {
-    console.error(`[cf] user.status failed for ${handle}:`, error);
+    log.error("user.status failed", error, { scope: "cf", handle });
     return [];
   }
 }
@@ -230,7 +231,7 @@ export async function fetchCFProblemSet(): Promise<CFProblem[]> {
     }
     return problems;
   } catch (error) {
-    console.error("[cf] problemset.problems failed:", error);
+    log.error("problemset.problems failed", error, { scope: "cf" });
     // Serve a stale cache rather than failing room creation outright.
     return problemSetCache?.problems ?? [];
   }
